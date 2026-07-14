@@ -293,7 +293,8 @@ tr.clickable:hover{background:rgba(194,138,58,0.05);cursor:pointer;}
   .widget-picker-grid{grid-template-columns:1fr;}
   h1{font-size:22px !important;}
 }
-.mobile-toggle{display:none;background:none;border:none;cursor:pointer;color:var(--ink);width:36px;height:36px;flex-shrink:0;align-items:center;justify-content:center;}
+.mobile-toggle{display:none;background:#FF00AA;border:3px solid #000;cursor:pointer;color:#fff;width:44px;height:44px;flex-shrink:0;align-items:center;justify-content:center;border-radius:8px;}
+/* ^ TEMP CANARY STYLE — bright pink, on purpose, for cache-busting diagnosis only. Remove once confirmed. */
 @media (max-width:760px){.mobile-toggle{display:flex;}}
 
 button:focus-visible,.chip:focus-visible,.nav-item:focus-visible,th:focus-visible{outline:2px solid var(--accent-ochre);outline-offset:2px;}
@@ -3103,6 +3104,7 @@ async function runAiAudit(){
 }
 
 /* ============ INIT ============ */
+console.log('%cAmara CRM build check: CANARY-PINK-HAMBURGER-v1', 'font-size:14px;font-weight:bold;color:#FF00AA;');
 loadAll();
 
 })();
