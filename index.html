@@ -103,7 +103,8 @@ input,textarea,select{font-family:var(--sans);}
 .head-actions{display:flex;gap:8px;}
 
 /* ---------- buttons / fields ---------- */
-.btn{font-family:var(--sans);font-size:11.5px;font-weight:600;padding:8px 15px;border-radius:7px;border:1px solid var(--rule-strong);background:var(--tile-cream);color:var(--ink);display:inline-flex;align-items:center;gap:6px;transition:transform .08s ease;}
+button{-webkit-appearance:none;-moz-appearance:none;appearance:none;box-sizing:border-box;}
+.btn{font-family:var(--sans);font-size:11.5px;font-weight:600;padding:8px 15px;border-radius:7px;border:1px solid var(--rule-strong);background:var(--tile-cream);color:var(--ink);display:inline-flex;align-items:center;gap:6px;transition:transform .08s ease;line-height:1.3;white-space:nowrap;}
 .btn:active{transform:scale(0.97);}
 .btn:hover{background:#F3EEDF;}
 .btn.primary{background:var(--linen-teal);color:var(--cream-on-teal);border-color:var(--linen-teal);}
@@ -262,9 +263,25 @@ tr.clickable:hover{background:rgba(194,138,58,0.05);cursor:pointer;}
 @media (max-width:760px){
   .sidebar{position:fixed;left:-260px;transition:left .2s ease;z-index:150;}
   .sidebar.open{left:0;}
-  .topbar{padding:10px 14px;}
+  .topbar{padding:10px 14px;gap:8px;}
+  .topbar .btn.ochre, .topbar .btn.primary{display:none;} /* redundant with each page's own "New…" button, and there's no room for them here */
   .content{padding:16px 14px;}
   .slideover{width:100%;}
+  .field-row{flex-direction:column;gap:0;}
+  .head-actions{flex-wrap:wrap;width:100%;}
+  .page-head{gap:12px;}
+  .modal, .modal.wide{max-width:100%;}
+  .modal-body{padding:16px 16px;}
+  .widget-picker-grid{grid-template-columns:repeat(2,1fr);}
+  .kpi-row{grid-template-columns:repeat(2,1fr);}
+  .avatar-chip .nm, .avatar-chip .role{display:none;} /* keep just the initials bubble to save space */
+  table{font-size:11.5px;}
+  th, td{padding:8px 6px;}
+}
+@media (max-width:420px){
+  .kpi-row{grid-template-columns:1fr;}
+  .widget-picker-grid{grid-template-columns:1fr;}
+  h1{font-size:22px !important;}
 }
 .mobile-toggle{display:none;background:none;border:none;cursor:pointer;color:var(--ink);}
 @media (max-width:760px){.mobile-toggle{display:block;}}
@@ -352,7 +369,8 @@ const LOGO_URI = 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAALQAAACsCAYAAADS
 const PREFIX_TABLE = {
   'contact:':'contacts', 'note:':'notes', 'opp:':'opportunities', 'task:':'tasks',
   'lead:':'leads', 'product:':'products', 'campaign:':'campaigns', 'doc:':'documents',
-  'widget:':'widgets', 'rule:':'automation_rules', 'taskComment:':'task_comments', 'user:':'profiles'
+  'widget:':'widgets', 'rule:':'automation_rules', 'taskComment:':'task_comments', 'user:':'profiles',
+  'picklist:':'picklists'
 };
 function camelToSnake(s){ return s.replace(/([A-Z])/g,'_$1').toLowerCase(); }
 function snakeToCamel(s){ return s.replace(/_([a-z0-9])/g,(_,c)=>c.toUpperCase()); }
@@ -492,6 +510,14 @@ const CAMPAIGN_STATUSES = [
 ];
 const STAGE_WEIGHTS = {new:0.10, proposal:0.40, negotiation:0.65, won:1, lost:0};
 const TASK_STATUSES = ['Not Started','In Progress','Completed','Deferred'];
+const REMINDER_OPTIONS = [
+  {value:'', label:"Don't remind me"},
+  {value:'0', label:'On the due date'},
+  {value:'1', label:'1 day before'},
+  {value:'2', label:'2 days before'},
+  {value:'3', label:'3 days before'},
+  {value:'7', label:'1 week before'}
+];
 const RULE_TRIGGERS = [
   {id:'opp_stage', label:'Opportunity stage changes to…', module:'opp', field:'stage', options:STAGES},
   {id:'lead_status', label:'Lead status changes to…', module:'lead', field:'status', options:LEAD_STATUSES}
@@ -544,14 +570,29 @@ let state = {
   showNewRule:false, editingAddressContactId:null, lineItemDraft:{productId:'', qty:1},
   taskView:'list', taskCardFields:{owner:true, contact:true, priority:true, due:true}, showCardFields:false,
   openTaskId:null, pipelineView:'kanban', pipelineStageFilter:'all',
-  homeLayout:null, homeLayoutDraft:null, showCustomizeHome:false, auditResult:null
+  homeLayout:null, homeLayoutDraft:null, showCustomizeHome:false, auditResult:null,
+  profileError:'', profileNotice:'', profileLoading:false,
+  passwordError:'', passwordNotice:'', passwordLoading:false,
+  picklists:[], showManageCategory:false, newCategoryDraft:''
 };
 
 /* ============ bootstrap ============ */
 async function loadAll(){
   state.loading = true; render();
 
-  const {data:{session}} = await sb.auth.getSession();
+  let session;
+  try{
+    const res = await sb.auth.getSession();
+    session = res.data.session;
+  }catch(e){
+    console.error('getSession failed', e);
+    state.loading = false;
+    state.setupStage = 'data-error';
+    state.dataLoadError = e.message || 'Could not verify your session.';
+    render();
+    return;
+  }
+
   if(!session){
     state.currentUser = null;
     state.setupStage = 'auth';
@@ -560,36 +601,46 @@ async function loadAll(){
     return;
   }
 
-  const [users, contacts, notes, opps, tasks, company, homeLayoutRow, leads, products, campaigns, documents, widgets, rules, taskComments] = await Promise.all([
-    loadCollection('user:'), loadCollection('contact:'), loadCollection('note:'),
-    loadCollection('opp:'), loadCollection('task:'),
-    storeGet('company:profile'), storeGet('layout:home'),
-    loadCollection('lead:'), loadCollection('product:'), loadCollection('campaign:'),
-    loadCollection('doc:'), loadCollection('widget:'), loadCollection('rule:'), loadCollection('taskComment:')
-  ]);
-  state.users = users;
-  state.contacts = contacts.sort((a,b)=>a.name.localeCompare(b.name));
-  state.notes = notes.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
-  state.opps = opps;
-  state.tasks = tasks;
-  state.leads = leads.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
-  state.products = products.sort((a,b)=>a.name.localeCompare(b.name));
-  state.campaigns = campaigns.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
-  state.documents = documents;
-  state.widgets = widgets;
-  state.rules = rules;
-  state.taskComments = taskComments.sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
-  if(company) state.company = company;
-  state.homeLayout = (homeLayoutRow && homeLayoutRow.sections) || DEFAULT_HOME_SECTIONS;
-  state.onboardDismissed = false; // session-only in the Supabase build
+  try{
+    const [users, contacts, notes, opps, tasks, company, homeLayoutRow, leads, products, campaigns, documents, widgets, rules, taskComments, picklists] = await Promise.all([
+      loadCollection('user:'), loadCollection('contact:'), loadCollection('note:'),
+      loadCollection('opp:'), loadCollection('task:'),
+      storeGet('company:profile'), storeGet('layout:home'),
+      loadCollection('lead:'), loadCollection('product:'), loadCollection('campaign:'),
+      loadCollection('doc:'), loadCollection('widget:'), loadCollection('rule:'), loadCollection('taskComment:'),
+      loadCollection('picklist:')
+    ]);
+    state.users = users;
+    state.contacts = contacts.sort((a,b)=>a.name.localeCompare(b.name));
+    state.notes = notes.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+    state.opps = opps;
+    state.tasks = tasks;
+    state.leads = leads.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+    state.products = products.sort((a,b)=>a.name.localeCompare(b.name));
+    state.campaigns = campaigns.sort((a,b)=>(b.createdAt||'').localeCompare(a.createdAt||''));
+    state.documents = documents;
+    state.widgets = widgets;
+    state.rules = rules;
+    state.taskComments = taskComments.sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
+    state.picklists = picklists.sort((a,b)=>(a.position||0)-(b.position||0));
+    if(company) state.company = company;
+    state.homeLayout = (homeLayoutRow && homeLayoutRow.sections) || DEFAULT_HOME_SECTIONS;
+    state.onboardDismissed = false; // session-only in the Supabase build
 
-  state.currentUser = state.users.find(u=>u.id===session.user.id) || null;
+    state.currentUser = state.users.find(u=>u.id===session.user.id) || null;
 
-  if(!state.currentUser){
-    // Signed in with Supabase but no profile row yet (rare: trigger delay, or profile removed by an admin)
-    state.setupStage = 'no-profile';
-  } else {
-    state.setupStage = null;
+    if(!state.currentUser){
+      // Signed in with Supabase but no profile row yet (rare: trigger delay, or profile removed by an admin)
+      state.setupStage = 'no-profile';
+    } else {
+      state.setupStage = null;
+    }
+  }catch(e){
+    // Important: we ARE signed in at this point (session exists above) — a failure here
+    // is a data-loading hiccup, not a login failure, and must never be shown as one.
+    console.error('data load failed', e);
+    state.setupStage = 'data-error';
+    state.dataLoadError = e.message || 'Could not load your data.';
   }
 
   state.loading = false;
@@ -619,6 +670,17 @@ function dueLabel(dueDate,done){
   if(days<0) return Math.abs(days)+'d overdue';
   if(days===0) return 'Due today';
   return 'Due in '+days+'d';
+}
+
+function taskCategories(){ return (state.picklists||[]).filter(p=>p.listKey==='task_categories'); }
+
+function tasksWithReminderDue(){
+  const today = todayISO();
+  return state.tasks.filter(t=>{
+    if(t.done || !t.dueDate || t.reminderDays==null || t.reminderDays==='') return false;
+    const remindFrom = addDays(t.dueDate, -Number(t.reminderDays));
+    return today >= remindFrom && today < t.dueDate; // overdue tasks are shown separately
+  });
 }
 
 async function createRepeatFollowUp(t){
@@ -885,6 +947,22 @@ function motif(){
 
 /* ============ SETUP SCREENS ============ */
 function renderSetupScreen(){
+  if(state.setupStage === 'data-error'){
+    return `
+    <div class="linen-teal" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;">
+      <div class="modal" style="max-width:440px;">
+        <div class="modal-body" style="padding:28px 26px;">
+          <img src="${LOGO_URI}" alt="" style="width:56px;margin-bottom:14px;">
+          <div class="eyebrow">You're signed in</div>
+          <h1 style="font-family:var(--serif);font-weight:400;font-size:22px;margin:0 0 4px;">We just couldn't load your data</h1>
+          <div class="page-sub" style="margin-bottom:16px;">Your login worked fine — this is a separate hiccup fetching your CRM data, often a temporary rate limit if there's been a lot of activity in a short time. It usually clears within a minute.</div>
+          ${state.dataLoadError ? `<div style="color:var(--sos-red);font-size:11px;margin-bottom:14px;word-break:break-word;">${escapeHtml(state.dataLoadError)}</div>` : ''}
+          <button class="btn primary" id="retry-data-load" style="width:100%;justify-content:center;margin-bottom:8px;">Try again</button>
+          <button class="btn ghost" id="signout-data-error" style="width:100%;justify-content:center;">Sign out</button>
+        </div>
+      </div>
+    </div>`;
+  }
   if(state.setupStage === 'no-profile'){
     return `
     <div class="linen-teal" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;">
@@ -980,6 +1058,10 @@ function bindSetupEvents(){
   if(reload) reload.addEventListener('click', ()=>loadAll());
   const signoutNoProfile = document.getElementById('signout-no-profile');
   if(signoutNoProfile) signoutNoProfile.addEventListener('click', async ()=>{ await sb.auth.signOut(); await loadAll(); });
+  const retryDataLoad = document.getElementById('retry-data-load');
+  if(retryDataLoad) retryDataLoad.addEventListener('click', ()=>loadAll());
+  const signoutDataError = document.getElementById('signout-data-error');
+  if(signoutDataError) signoutDataError.addEventListener('click', async ()=>{ await sb.auth.signOut(); await loadAll(); });
 }
 
 /* ============ SIDEBAR / TOPBAR ============ */
@@ -1030,7 +1112,7 @@ function renderSidebar(){
         </div>`).join('')}
     `).join('')}
     <div class="sidebar-footer">
-      <div class="user-chip" data-action="switch-user" tabindex="0" title="Click to sign out">
+      <div class="user-chip" data-nav="profile" tabindex="0" title="View your profile">
         <div class="av" style="background:${avatarColor(state.currentUser.id)}">${initials(state.currentUser.name)}</div>
         <div>
           <div style="font-size:11.5px;font-weight:700;color:#fff;">${escapeHtml(state.currentUser.name)}</div>
@@ -1049,8 +1131,8 @@ function renderTopbar(){
     <div class="search-wrap">${ICONS.search}<input type="text" placeholder="Search patients, companies, contacts…" value="${escapeHtml(state.search)}" data-input="global-search"></div>
     <button class="btn ochre" data-action="new-contact">${ICONS.plus} Contact</button>
     <button class="btn primary" data-action="new-opp">${ICONS.plus} Opportunity</button>
-    <button class="icon-btn" data-action="toggle-notif" title="Notifications">${ICONS.bell}${stats.overdue.length>0?`<span class="bubble">${stats.overdue.length}</span>`:''}</button>
-    <div class="avatar-chip" data-action="switch-user" title="Click to sign out">
+    <button class="icon-btn" data-action="toggle-notif" title="Notifications">${ICONS.bell}${(stats.overdue.length+tasksWithReminderDue().length)>0?`<span class="bubble">${stats.overdue.length+tasksWithReminderDue().length}</span>`:''}</button>
+    <div class="avatar-chip" data-nav="profile" title="View your profile">
       <div class="av" style="background:${avatarColor(state.currentUser.id)}">${initials(state.currentUser.name)}</div>
       <div><div class="nm">${escapeHtml(state.currentUser.name)}</div><div class="role">${state.currentUser.role}</div></div>
     </div>
@@ -1059,12 +1141,20 @@ function renderTopbar(){
 
 function renderNotifPanel(){
   const stats = computeStats();
+  const reminders = tasksWithReminderDue();
   return `
   <div style="position:fixed;inset:0;z-index:400;" data-close-overlay="notif">
-    <div class="tile" style="position:absolute;right:26px;top:60px;width:320px;max-height:420px;overflow-y:auto;margin:0;padding:0;" onclick="event.stopPropagation()">
+    <div class="tile" style="position:absolute;right:26px;top:60px;width:340px;max-height:460px;overflow-y:auto;margin:0;padding:0;" onclick="event.stopPropagation()">
       <div class="tile-h" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--rule);"><h3>Notifications</h3></div>
-      ${stats.overdue.length===0 ? `<div class="empty-state" style="padding:24px;"><p>Nothing overdue. Nice.</p></div>` :
-        stats.overdue.map(t=>`<div class="task-row" style="padding:10px 14px;"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">${dueLabel(t.dueDate,t.done)}</div></div></div>`).join('')}
+      ${stats.overdue.length===0 && reminders.length===0 ? `<div class="empty-state" style="padding:24px;"><p>Nothing needs attention. Nice.</p></div>` : ''}
+      ${stats.overdue.length>0 ? `
+        <div style="padding:8px 14px 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--sos-red);font-weight:700;">Overdue</div>
+        ${stats.overdue.map(t=>`<div class="task-row clickable" style="padding:10px 14px;" data-open-task="${t.id}"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">${dueLabel(t.dueDate,t.done)}</div></div></div>`).join('')}
+      ` : ''}
+      ${reminders.length>0 ? `
+        <div style="padding:8px 14px 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent-ochre);font-weight:700;">Reminders</div>
+        ${reminders.map(t=>`<div class="task-row clickable" style="padding:10px 14px;" data-open-task="${t.id}"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">Due ${fmtDate(t.dueDate)}</div></div></div>`).join('')}
+      ` : ''}
     </div>
   </div>`;
 }
@@ -1084,6 +1174,7 @@ function renderView(){
     case 'tasks': return renderTasks();
     case 'reports': state.visitedReports = true; return renderReports();
     case 'analytics': return renderAnalytics();
+    case 'profile': return renderProfile();
     case 'team': return isSuperadmin() ? renderTeam() : renderHome();
     case 'rules': return isSuperadmin() ? renderRules() : renderHome();
     case 'settings': return isSuperadmin() ? renderSettings() : renderHome();
@@ -1213,7 +1304,7 @@ function renderTaskRow(t){
   return `
     <div class="task-row clickable" data-open-task="${t.id}">
       <div class="task-check ${t.done?'done':''}" data-toggle-task="${t.id}">${t.done?ICONS.check:''}</div>
-      <div style="flex:1"><div class="task-title ${t.done?'done':''}">${escapeHtml(t.title)}</div><div class="task-sub">${[c?escapeHtml(c.name):null, owner?'Owner: '+escapeHtml(owner.name):null, commentCount>0?('💬 '+commentCount):null].filter(Boolean).join(' · ')}</div></div>
+      <div style="flex:1"><div class="task-title ${t.done?'done':''}">${escapeHtml(t.title)}</div><div class="task-sub">${[t.category?escapeHtml(t.category):null, c?escapeHtml(c.name):null, owner?'Owner: '+escapeHtml(owner.name):null, commentCount>0?('💬 '+commentCount):null].filter(Boolean).join(' · ')}</div></div>
       <div class="task-due ${dueClass(t.dueDate,t.done)}">${dueLabel(t.dueDate,t.done)}</div>
     </div>`;
 }
@@ -1843,9 +1934,14 @@ function renderTeam(){
     <div class="page-head"><div><div class="eyebrow">${state.users.length} team member${state.users.length===1?'':'s'}</div><h1>Team &amp; users</h1><div class="page-sub">Real accounts now — share the link below and assign roles once people sign up.</div></div>
     </div>
     ${motif()}
-    <div class="tile ai-tile">
-      <div class="ai-tile-head"><div class="ai-mark">＋</div><h3 style="font-family:var(--serif);font-style:italic;font-size:15px;">Adding someone new</h3></div>
-      <div class="ai-text">Share this app's link with them and ask them to click "Create an account." They'll appear in the table below automatically as Staff the moment they sign up — then just change their role here.</div>
+    <div class="tile" style="border-left:3px solid var(--accent-ochre);">
+      <div style="display:flex;gap:10px;align-items:flex-start;">
+        <span style="font-size:15px;line-height:1;margin-top:1px;">ℹ️</span>
+        <div>
+          <h3 style="font-family:var(--serif);font-style:italic;font-size:14px;margin:0 0 4px;color:var(--ink-muted);">How to add someone — there's no "add" button</h3>
+          <div class="page-sub" style="margin:0;">Share this app's link with them and have them click "Create an account" themselves. They'll appear in the table below automatically as Staff the moment they sign up — then just change their role here.</div>
+        </div>
+      </div>
     </div>
     <div class="tile" style="padding:0;overflow-x:auto;">
       <table>
@@ -1865,6 +1961,38 @@ function renderTeam(){
     </div>`;
 }
 
+/* ============ MY PROFILE ============ */
+function renderProfile(){
+  const u = state.currentUser;
+  return `
+    <div class="page-head"><div><div class="eyebrow">Your account · ${escapeHtml(u.role)}</div><h1>Profile</h1></div></div>
+    ${motif()}
+    <div class="tile" style="max-width:440px;">
+      <div class="tile-h"><h3>Your details</h3></div>
+      <div class="field"><label>Name</label><input id="pf-name" type="text" value="${escapeHtml(u.name)}"></div>
+      <div class="field"><label>Email</label><input id="pf-email" type="email" value="${escapeHtml(u.email||'')}"></div>
+      <div class="page-sub" style="margin-bottom:10px;">Changing your email may require confirming a link sent to the new address, depending on your workspace's settings.</div>
+      ${state.profileError ? `<div style="color:var(--sos-red);font-size:11.5px;margin-bottom:10px;">${escapeHtml(state.profileError)}</div>` : ''}
+      ${state.profileNotice ? `<div style="color:var(--code-positive);font-size:11.5px;margin-bottom:10px;">${escapeHtml(state.profileNotice)}</div>` : ''}
+      <button class="btn primary" data-action="save-profile" ${state.profileLoading?'disabled':''}>${state.profileLoading?'<span class="spinner"></span> Saving…':'Save details'}</button>
+    </div>
+
+    <div class="tile" style="max-width:440px;">
+      <div class="tile-h"><h3>Change password</h3></div>
+      <div class="field"><label>Current password</label><input id="pf-current-password" type="password" placeholder="••••••••"></div>
+      <div class="field"><label>New password</label><input id="pf-new-password" type="password" placeholder="At least 6 characters"></div>
+      <div class="field"><label>Confirm new password</label><input id="pf-confirm-password" type="password" placeholder="Repeat the new password"></div>
+      ${state.passwordError ? `<div style="color:var(--sos-red);font-size:11.5px;margin-bottom:10px;">${escapeHtml(state.passwordError)}</div>` : ''}
+      ${state.passwordNotice ? `<div style="color:var(--code-positive);font-size:11.5px;margin-bottom:10px;">${escapeHtml(state.passwordNotice)}</div>` : ''}
+      <button class="btn primary" data-action="change-password" ${state.passwordLoading?'disabled':''}>${state.passwordLoading?'<span class="spinner"></span> Updating…':'Update password'}</button>
+    </div>
+
+    <div class="tile" style="max-width:440px;">
+      <div class="tile-h"><h3 style="color:var(--sos-red);">Sign out</h3></div>
+      <div class="page-sub" style="margin-bottom:10px;">Signs you out of this device.</div>
+      <button class="btn danger sm" data-action="switch-user">Sign out</button>
+    </div>`;
+}
 /* ============ AUTOMATION RULES (superadmin) ============ */
 function renderRules(){
   return `
@@ -1947,6 +2075,22 @@ function renderSettings(){
       <div class="page-sub" style="margin-top:12px;">Assign roles per person in Team &amp; Users.</div>
     </div>
     <div class="tile" style="max-width:420px;">
+      <div class="tile-h"><h3>Manage lists</h3></div>
+      <div class="page-sub" style="margin-bottom:12px;">Custom option lists used across the app. Starting with Task Categories — add more of these the same way later as new needs come up.</div>
+      <div class="field"><label>Task categories</label></div>
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">
+        ${taskCategories().length===0?`<div class="page-sub">No categories yet — add your first one below.</div>`:taskCategories().map(c=>`
+          <div class="chip" style="display:flex;align-items:center;gap:6px;">
+            ${escapeHtml(c.label)}
+            <span data-action="delete-category" data-picklist="${c.id}" style="cursor:pointer;color:var(--ink-faint);font-weight:700;">✕</span>
+          </div>`).join('')}
+      </div>
+      <div class="field-row">
+        <div class="field" style="flex:1;"><input id="new-category-input" type="text" placeholder="e.g. Follow-up, Renewal, Onboarding"></div>
+        <div class="field" style="flex:0 0 auto;"><button class="btn ochre sm" data-action="add-category">${ICONS.plus} Add</button></div>
+      </div>
+    </div>
+    <div class="tile" style="max-width:420px;">
       <div class="tile-h"><h3>Export everything</h3></div>
       <div class="page-sub" style="margin-bottom:10px;">Download your data as CSV files.</div>
       <div style="display:flex;gap:8px;flex-wrap:wrap;">
@@ -2019,9 +2163,13 @@ function renderNewTaskModal(){
         </div>
         <div class="field"><label>Related contact</label><select id="nt-contact"><option value="">None</option>${state.contacts.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Owner</label><select id="nt-owner">${state.users.map(u=>`<option value="${u.id}" ${u.id===state.currentUser.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div>
+        <div class="field-row">
+          <div class="field"><label>Category</label><select id="nt-category"><option value="">None</option>${taskCategories().map(c=>`<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)}</option>`).join('')}</select></div>
+          <div class="field"><label>Remind me</label><select id="nt-reminder">${REMINDER_OPTIONS.map(r=>`<option value="${r.value}">${r.label}</option>`).join('')}</select></div>
+        </div>
         <div class="field-row"><div class="field"><label>Priority</label><select id="nt-priority"><option value="low">Low</option><option value="normal" selected>Normal</option><option value="high">High</option></select></div>
         <div class="field"><label>Repeat</label><select id="nt-repeat"><option value="none">Doesn't repeat</option><option value="daily">Daily</option><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select></div></div>
-        <div class="page-sub">When you complete a repeating task, the next one is created automatically.</div>
+        <div class="page-sub">When you complete a repeating task, the next one is created automatically. Reminders show up in the notification bell — no email/push is sent.</div>
       </div>
       <div class="modal-foot"><button class="btn ochre" data-action="save-new-task">Save task</button></div>
     </div>
@@ -2048,27 +2196,31 @@ function renderAskMaraTile(){
 function renderTaskDetailModal(){
   const t = state.tasks.find(x=>x.id===state.openTaskId);
   if(!t) return '';
-  const c = contactById(t.contactId);
-  const owner = t.ownerId ? state.users.find(u=>u.id===t.ownerId) : null;
   const comments = state.taskComments.filter(cm=>cm.taskId===t.id).sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
   return `
   <div class="modal-overlay" data-close-overlay="task-detail">
     <div class="modal wide" onclick="event.stopPropagation()">
-      <div class="modal-head"><h2>${escapeHtml(t.title)}</h2><button class="modal-close" data-action="close-task-detail">✕</button></div>
+      <div class="modal-head"><h2>Edit task</h2><button class="modal-close" data-action="close-task-detail">✕</button></div>
       <div class="modal-body">
+        <div class="field"><label>Task</label><input id="td-title" type="text" value="${escapeHtml(t.title)}"></div>
         <div class="field-row">
-          <div class="field"><label>Contact</label><div>${c?escapeHtml(c.name):'—'}</div></div>
-          <div class="field"><label>Owner</label><div>${owner?escapeHtml(owner.name):'—'}</div></div>
+          <div class="field"><label>Contact</label><select id="td-contact"><option value="">None</option>${state.contacts.map(c=>`<option value="${c.id}" ${c.id===t.contactId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+          <div class="field"><label>Owner</label><select id="td-owner">${state.users.map(u=>`<option value="${u.id}" ${u.id===t.ownerId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div>
         </div>
         <div class="field-row">
-          <div class="field"><label>Due date</label><div>${fmtDate(t.dueDate)}</div></div>
-          <div class="field"><label>Status</label><div><span class="task-due ${dueClass(t.dueDate,t.done)}">${dueLabel(t.dueDate,t.done)}</span></div></div>
+          <div class="field"><label>Due date</label><input id="td-due" type="date" value="${t.dueDate||''}"></div>
+          <div class="field"><label>Status</label><select id="td-status">${TASK_STATUSES.map(s=>`<option value="${s}" ${s===(t.status||'Not Started')?'selected':''}>${s}</option>`).join('')}</select></div>
         </div>
         <div class="field-row">
-          <div class="field"><label>Priority</label><div style="text-transform:capitalize;">${t.priority||'normal'}</div></div>
-          <div class="field"><label>Repeat</label><div style="text-transform:capitalize;">${t.repeat&&t.repeat!=='none'?t.repeat:'Does not repeat'}</div></div>
+          <div class="field"><label>Category</label><select id="td-category"><option value="">None</option>${taskCategories().map(c=>`<option value="${escapeHtml(c.label)}" ${c.label===t.category?'selected':''}>${escapeHtml(c.label)}</option>`).join('')}</select></div>
+          <div class="field"><label>Remind me</label><select id="td-reminder">${REMINDER_OPTIONS.map(r=>`<option value="${r.value}" ${String(t.reminderDays==null?'':t.reminderDays)===r.value?'selected':''}>${r.label}</option>`).join('')}</select></div>
         </div>
-        <div class="page-sub">Added ${fmtDateTime(t.createdAt)} by ${escapeHtml(t.author||'—')}</div>
+        <div class="field-row">
+          <div class="field"><label>Priority</label><select id="td-priority"><option value="low" ${t.priority==='low'?'selected':''}>Low</option><option value="normal" ${(!t.priority||t.priority==='normal')?'selected':''}>Normal</option><option value="high" ${t.priority==='high'?'selected':''}>High</option></select></div>
+          <div class="field"><label>Repeat</label><select id="td-repeat"><option value="none" ${(!t.repeat||t.repeat==='none')?'selected':''}>Doesn't repeat</option><option value="daily" ${t.repeat==='daily'?'selected':''}>Daily</option><option value="weekly" ${t.repeat==='weekly'?'selected':''}>Weekly</option><option value="monthly" ${t.repeat==='monthly'?'selected':''}>Monthly</option></select></div>
+        </div>
+        <div class="page-sub" style="margin-bottom:10px;">Added ${fmtDateTime(t.createdAt)} by ${escapeHtml(t.author||'—')}</div>
+        <button class="btn primary sm" data-action="save-task-edit" data-task="${t.id}">Save changes</button>
 
         <div class="tile" style="margin-top:14px;">
           <div class="tile-h"><h3>Comments</h3></div>
@@ -2157,7 +2309,7 @@ function bindEvents(){
 
   app.querySelectorAll('[data-open-contact]').forEach(el=>el.addEventListener('click',(e)=>{ e.stopPropagation(); state.openContactId=el.getAttribute('data-open-contact'); render(); }));
   app.querySelectorAll('[data-open-opp]').forEach(el=>el.addEventListener('click',(e)=>{ e.stopPropagation(); state.openOppId=el.getAttribute('data-open-opp'); render(); }));
-  app.querySelectorAll('[data-open-task]').forEach(el=>el.addEventListener('click',(e)=>{ e.stopPropagation(); state.openTaskId=el.getAttribute('data-open-task'); render(); }));
+  app.querySelectorAll('[data-open-task]').forEach(el=>el.addEventListener('click',(e)=>{ e.stopPropagation(); state.openTaskId=el.getAttribute('data-open-task'); state.notifOpen=false; render(); }));
   const closeTaskDetail = app.querySelector('[data-action="close-task-detail"]'); if(closeTaskDetail) closeTaskDetail.addEventListener('click',()=>{ state.openTaskId=null; render(); });
 
   app.querySelectorAll('[data-quick-date]').forEach(el=>el.addEventListener('click',()=>{
@@ -2184,6 +2336,28 @@ function bindEvents(){
     state.tasks = state.tasks.filter(t=>t.id!==id);
     state.taskComments = state.taskComments.filter(cm=>cm.taskId!==id);
     state.openTaskId = null; flashToast('Task removed'); render();
+  });
+  const saveTaskEdit = app.querySelector('[data-action="save-task-edit"]');
+  if(saveTaskEdit) saveTaskEdit.addEventListener('click', async ()=>{
+    const id = saveTaskEdit.getAttribute('data-task');
+    const t = state.tasks.find(x=>x.id===id); if(!t) return;
+    const title = document.getElementById('td-title').value.trim();
+    if(!title){ flashToast('Task title is required'); return; }
+    const reminderVal = document.getElementById('td-reminder').value;
+    const status = document.getElementById('td-status').value;
+    t.title = title;
+    t.contactId = document.getElementById('td-contact').value || null;
+    t.ownerId = document.getElementById('td-owner').value || null;
+    t.dueDate = document.getElementById('td-due').value;
+    t.status = status;
+    t.done = (status === 'Completed');
+    t.category = document.getElementById('td-category').value || null;
+    t.reminderDays = reminderVal===''? null : Number(reminderVal);
+    t.priority = document.getElementById('td-priority').value;
+    t.repeat = document.getElementById('td-repeat').value;
+    const result = await storeSet('task:'+t.id, t);
+    if(!result){ flashToast("Couldn't save that change."); return; }
+    flashToast('Task updated'); render();
   });
 
   app.querySelectorAll('[data-close-overlay]').forEach(el=>el.addEventListener('click',()=>{
@@ -2245,7 +2419,8 @@ function bindEvents(){
   if(snt) snt.addEventListener('click', async ()=>{
     const title = document.getElementById('nt-title').value.trim();
     if(!title){ flashToast('Task title is required'); return; }
-    const t = { id:uid('task'), title, contactId:document.getElementById('nt-contact').value||null, oppId:null, ownerId:document.getElementById('nt-owner').value||state.currentUser.id, dueDate:document.getElementById('nt-due').value, priority:document.getElementById('nt-priority').value, repeat:document.getElementById('nt-repeat').value, status:'Not Started', done:false, author:state.currentUser.name, createdAt:todayISO() };
+    const reminderVal = document.getElementById('nt-reminder').value;
+    const t = { id:uid('task'), title, contactId:document.getElementById('nt-contact').value||null, oppId:null, ownerId:document.getElementById('nt-owner').value||state.currentUser.id, dueDate:document.getElementById('nt-due').value, priority:document.getElementById('nt-priority').value, repeat:document.getElementById('nt-repeat').value, category:document.getElementById('nt-category').value||null, reminderDays: reminderVal===''?null:Number(reminderVal), status:'Not Started', done:false, author:state.currentUser.name, createdAt:todayISO() };
     await storeSet('task:'+t.id, t); state.tasks.push(t); state.showNewTask=false; flashToast('Task added'); render();
   });
 
@@ -2522,16 +2697,77 @@ function bindEvents(){
     state.currentUser = null; state.authMode='signin'; state.setupStage='auth'; render();
   }));
 
+  // my profile
+  const saveProfile = app.querySelector('[data-action="save-profile"]');
+  if(saveProfile) saveProfile.addEventListener('click', async ()=>{
+    const name = document.getElementById('pf-name').value.trim();
+    const email = document.getElementById('pf-email').value.trim();
+    if(!name){ state.profileError='Name is required.'; state.profileNotice=''; render(); return; }
+    state.profileError=''; state.profileNotice=''; state.profileLoading=true; render();
+    try{
+      const emailChanged = email && email !== (state.currentUser.email||'');
+      if(emailChanged){
+        const {error} = await sb.auth.updateUser({ email, data:{ name } });
+        if(error) throw error;
+      } else {
+        const {error} = await sb.auth.updateUser({ data:{ name } });
+        if(error) throw error;
+      }
+      const u = state.currentUser;
+      u.name = name; if(!emailChanged) u.email = email;
+      const result = await storeSet('user:'+u.id, u);
+      if(!result) throw new Error('Saved your login, but the team profile record failed to update.');
+      state.profileLoading = false;
+      state.profileNotice = emailChanged ? 'Saved. Check your new email address to confirm the change.' : 'Profile updated.';
+      render();
+    }catch(e){
+      state.profileLoading = false;
+      state.profileError = e.message || 'Could not save your profile.';
+      render();
+    }
+  });
+
+  const changePassword = app.querySelector('[data-action="change-password"]');
+  if(changePassword) changePassword.addEventListener('click', async ()=>{
+    const currentPassword = document.getElementById('pf-current-password').value;
+    const newPassword = document.getElementById('pf-new-password').value;
+    const confirmPassword = document.getElementById('pf-confirm-password').value;
+    if(!currentPassword || !newPassword || !confirmPassword){ state.passwordError='Fill in all three password fields.'; state.passwordNotice=''; render(); return; }
+    if(newPassword.length<6){ state.passwordError='New password needs to be at least 6 characters.'; render(); return; }
+    if(newPassword!==confirmPassword){ state.passwordError="New password and confirmation don't match."; render(); return; }
+    state.passwordError=''; state.passwordNotice=''; state.passwordLoading=true; render();
+    try{
+      // Re-verify identity with the current password before allowing a change
+      const {error: verifyError} = await sb.auth.signInWithPassword({ email: state.currentUser.email, password: currentPassword });
+      if(verifyError) throw new Error('Current password is incorrect.');
+      const {error} = await sb.auth.updateUser({ password: newPassword });
+      if(error) throw error;
+      state.passwordLoading = false;
+      state.passwordNotice = 'Password updated.';
+      render();
+    }catch(e){
+      state.passwordLoading = false;
+      state.passwordError = e.message || 'Could not update your password.';
+      render();
+    }
+  });
+
   // team / roles / settings
   app.querySelectorAll('[data-change-role]').forEach(sel=>sel.addEventListener('change', async ()=>{
     const id = sel.getAttribute('data-change-role'); const u = state.users.find(x=>x.id===id); if(!u) return;
-    u.role = sel.value; await storeSet('user:'+u.id, u); flashToast('Role updated'); render();
+    const previousRole = u.role;
+    u.role = sel.value;
+    const result = await storeSet('user:'+u.id, u);
+    if(!result){ u.role = previousRole; flashToast("Couldn't update that role — you may not have permission."); render(); return; }
+    flashToast('Role updated'); render();
   }));
   app.querySelectorAll('[data-action="remove-user"]').forEach(b=>b.addEventListener('click', async ()=>{
     const id = b.getAttribute('data-user');
     const u = state.users.find(x=>x.id===id);
     if(u && u.role==='Superadmin' && state.users.filter(x=>x.role==='Superadmin').length<=1){ flashToast('Cannot remove the last Superadmin'); return; }
-    await storeDelete('user:'+id); state.users = state.users.filter(x=>x.id!==id); flashToast('Removed from team'); render();
+    const result = await storeDelete('user:'+id);
+    if(!result){ flashToast("Couldn't remove that person — you may not have permission."); return; }
+    state.users = state.users.filter(x=>x.id!==id); flashToast('Removed from team'); render();
   }));
   const saveCompany = app.querySelector('[data-action="save-company"]');
   if(saveCompany) saveCompany.addEventListener('click', async ()=>{
@@ -2539,6 +2775,22 @@ function bindEvents(){
     const tagline = document.getElementById('cs-tagline').value.trim();
     state.company = {name, tagline}; await storeSet('company:profile', state.company); flashToast('Saved'); render();
   });
+  const addCategoryBtn = app.querySelector('[data-action="add-category"]');
+  if(addCategoryBtn) addCategoryBtn.addEventListener('click', async ()=>{
+    const input = document.getElementById('new-category-input');
+    const label = input.value.trim();
+    if(!label){ flashToast('Enter a category name first'); return; }
+    const p = { id:uid('picklist'), listKey:'task_categories', label, position: taskCategories().length, createdAt:todayISO() };
+    const result = await storeSet('picklist:'+p.id, p);
+    if(!result){ flashToast("Couldn't add that — you may not have permission."); return; }
+    state.picklists.push(p); flashToast('Category added'); render();
+  });
+  app.querySelectorAll('[data-action="delete-category"]').forEach(el=>el.addEventListener('click', async ()=>{
+    const id = el.getAttribute('data-picklist');
+    const result = await storeDelete('picklist:'+id);
+    if(!result){ flashToast("Couldn't remove that — you may not have permission."); return; }
+    state.picklists = state.picklists.filter(p=>p.id!==id); render();
+  }));
   const resetBtn = app.querySelector('[data-action="reset-workspace"]');
   if(resetBtn) resetBtn.addEventListener('click', async ()=>{
     resetBtn.textContent = 'Resetting…';
