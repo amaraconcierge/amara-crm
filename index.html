@@ -125,6 +125,7 @@ button{-webkit-appearance:none;-moz-appearance:none;appearance:none;box-sizing:b
 .field{margin-bottom:14px;}
 .field label{display:block;font-size:9.5px;letter-spacing:0.12em;text-transform:uppercase;color:var(--ink-faint);margin-bottom:5px;font-weight:700;}
 .field input,.field textarea,.field select{width:100%;padding:9px 11px;border-radius:7px;border:1px solid var(--rule-strong);background:var(--linen-cream);font-size:12.5px;color:var(--ink);outline:none;-webkit-appearance:none;-moz-appearance:none;appearance:none;line-height:1.3;box-sizing:border-box;min-height:38px;}
+.field input[type="checkbox"], .field input[type="radio"]{width:14px;height:14px;min-height:unset;padding:0;margin:0;border-radius:3px;flex-shrink:0;-webkit-appearance:checkbox;-moz-appearance:checkbox;appearance:checkbox;background:none;border:1px solid var(--rule-strong);vertical-align:middle;}
 .field select{background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M1 1l4 4 4-4' stroke='%235C5347' stroke-width='1.4' fill='none' stroke-linecap='round' stroke-linejoin='round'/></svg>");background-repeat:no-repeat;background-position:right 12px center;padding-right:30px;}
 .field input[type="number"]::-webkit-inner-spin-button,.field input[type="number"]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0;}
 .field input[type="number"]{-moz-appearance:textfield;}
@@ -271,8 +272,9 @@ tr.clickable:hover{background:rgba(194,138,58,0.05);cursor:pointer;}
   .sidebar.open{left:0;}
   .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:190;}
   .sidebar-backdrop.open{display:block;}
-  .topbar{padding:10px 14px;gap:8px;}
+  .topbar{position:fixed;top:0;left:0;right:0;padding:10px 14px;gap:8px;z-index:150;}
   .topbar .btn.ochre, .topbar .btn.primary{display:none;} /* redundant with each page's own "New…" button, and there's no room for them here */
+  .main{padding-top:58px;}
   .content{padding:16px 14px;}
   .slideover{width:100%;}
   .field-row{flex-direction:column;gap:0;}
@@ -568,7 +570,8 @@ const ICONS = {
   forecast:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 19h16"/><path d="M6 15l4-5 3 3 5-7"/></svg>',
   analytics:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="12" width="4" height="8" rx="1"/><rect x="10" y="7" width="4" height="13" rx="1"/><rect x="17" y="3" width="4" height="17" rx="1"/></svg>',
   link:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 15l6-6"/><path d="M11 6l1-1a3.5 3.5 0 015 5l-1 1"/><path d="M13 18l-1 1a3.5 3.5 0 01-5-5l1-1"/></svg>',
-  rules:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/><path d="M9.5 8l6 8"/><path d="M4 17h3M17 7h3"/></svg>'
+  rules:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/><path d="M9.5 8l6 8"/><path d="M4 17h3M17 7h3"/></svg>',
+  edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>'
 };
 
 /* ============ state ============ */
@@ -591,7 +594,8 @@ let state = {
   profileError:'', profileNotice:'', profileLoading:false,
   passwordError:'', passwordNotice:'', passwordLoading:false,
   picklists:[], showManageCategory:false, newCategoryDraft:'',
-  contactSearch:'', leadSearch:'', pipelineSearch:'', taskSearch:'', campaignSearch:'', productSearch:''
+  contactSearch:'', leadSearch:'', pipelineSearch:'', taskSearch:'', campaignSearch:'', productSearch:'',
+  taskEditMode:false
 };
 
 /* ============ bootstrap ============ */
@@ -700,6 +704,25 @@ function dueLabel(dueDate,done){
 }
 
 function taskCategories(){ return (state.picklists||[]).filter(p=>p.listKey==='task_categories'); }
+
+function isReadByMe(t){ return (t.readBy||[]).includes(state.currentUser.id); }
+
+function getNotifications(){
+  const stats = computeStats();
+  const reminders = tasksWithReminderDue();
+  const overdueIds = new Set(stats.overdue.map(t=>t.id));
+  const reminderIds = new Set(reminders.map(t=>t.id));
+  const assignedOther = tasksAssignedToMe().filter(t=>!overdueIds.has(t.id) && !reminderIds.has(t.id));
+  return {
+    overdue: stats.overdue.filter(t=>!isReadByMe(t)),
+    reminders: reminders.filter(t=>!isReadByMe(t)),
+    assigned: assignedOther.filter(t=>!isReadByMe(t))
+  };
+}
+function unreadNotifCount(){
+  const n = getNotifications();
+  return n.overdue.length + n.reminders.length + n.assigned.length;
+}
 
 function tasksAssignedToMe(){
   if(!state.currentUser) return [];
@@ -1157,14 +1180,13 @@ function renderSidebar(){
 }
 
 function renderTopbar(){
-  const stats = computeStats();
   return `
   <div class="topbar">
     <button class="mobile-toggle" data-action="toggle-sidebar">${ICONS.menu}</button>
     <div class="search-wrap">${ICONS.search}<input type="text" placeholder="Search patients, companies, contacts…" value="${escapeHtml(state.search)}" data-input="global-search"></div>
     <button class="btn ochre" data-action="new-contact">${ICONS.plus} Contact</button>
     <button class="btn primary" data-action="new-opp">${ICONS.plus} Opportunity</button>
-    <button class="icon-btn" data-action="toggle-notif" title="Notifications">${ICONS.bell}${(()=>{ const c = stats.overdue.length + tasksWithReminderDue().length + tasksAssignedToMe().filter(t=>!stats.overdue.some(o=>o.id===t.id) && !tasksWithReminderDue().some(r=>r.id===t.id)).length; return c>0?`<span class="bubble">${c}</span>`:''; })()}</button>
+    <button class="icon-btn" data-action="toggle-notif" title="Notifications">${ICONS.bell}${unreadNotifCount()>0?`<span class="bubble">${unreadNotifCount()}</span>`:''}</button>
     <div class="avatar-chip" data-nav="profile" title="View your profile">
       <div class="av" style="background:${avatarColor(state.currentUser.id)}">${initials(state.currentUser.name)}</div>
       <div><div class="nm">${escapeHtml(state.currentUser.name)}</div><div class="role">${state.currentUser.role}</div></div>
@@ -1173,27 +1195,32 @@ function renderTopbar(){
 }
 
 function renderNotifPanel(){
-  const stats = computeStats();
-  const reminders = tasksWithReminderDue();
-  const overdueIds = new Set(stats.overdue.map(t=>t.id));
-  const reminderIds = new Set(reminders.map(t=>t.id));
-  const assignedOther = tasksAssignedToMe().filter(t=>!overdueIds.has(t.id) && !reminderIds.has(t.id));
+  const n = getNotifications();
+  const total = n.overdue.length + n.reminders.length + n.assigned.length;
+  const renderRow = (t, sub) => `
+    <div class="task-row" style="padding:10px 14px;">
+      <div class="clickable" style="flex:1;cursor:pointer;" data-open-task="${t.id}"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">${sub}</div></div>
+      <button class="btn ghost sm" data-action="mark-notif-read" data-task="${t.id}" title="Mark as read">${ICONS.check} Read</button>
+    </div>`;
   return `
   <div style="position:fixed;inset:0;z-index:400;" data-close-overlay="notif">
-    <div class="tile" style="position:absolute;right:26px;top:60px;width:340px;max-height:460px;overflow-y:auto;margin:0;padding:0;" onclick="event.stopPropagation()">
-      <div class="tile-h" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--rule);"><h3>Notifications</h3></div>
-      ${stats.overdue.length===0 && reminders.length===0 && assignedOther.length===0 ? `<div class="empty-state" style="padding:24px;"><p>Nothing needs attention. Nice.</p></div>` : ''}
-      ${stats.overdue.length>0 ? `
+    <div class="tile" style="position:absolute;right:26px;top:60px;width:360px;max-height:460px;overflow-y:auto;margin:0;padding:0;" onclick="event.stopPropagation()">
+      <div class="tile-h" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--rule);display:flex;justify-content:space-between;align-items:center;">
+        <h3>Notifications</h3>
+        ${total>0?`<button class="btn ghost sm" data-action="mark-all-notif-read">Mark all read</button>`:''}
+      </div>
+      ${total===0 ? `<div class="empty-state" style="padding:24px;"><p>Nothing needs attention. Nice.</p></div>` : ''}
+      ${n.overdue.length>0 ? `
         <div style="padding:8px 14px 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--sos-red);font-weight:700;">Overdue</div>
-        ${stats.overdue.map(t=>`<div class="task-row clickable" style="padding:10px 14px;" data-open-task="${t.id}"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">${dueLabel(t.dueDate,t.done)}</div></div></div>`).join('')}
+        ${n.overdue.map(t=>renderRow(t, dueLabel(t.dueDate,t.done))).join('')}
       ` : ''}
-      ${reminders.length>0 ? `
+      ${n.reminders.length>0 ? `
         <div style="padding:8px 14px 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent-ochre);font-weight:700;">Reminders</div>
-        ${reminders.map(t=>`<div class="task-row clickable" style="padding:10px 14px;" data-open-task="${t.id}"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">Due ${fmtDate(t.dueDate)}</div></div></div>`).join('')}
+        ${n.reminders.map(t=>renderRow(t, 'Due '+fmtDate(t.dueDate))).join('')}
       ` : ''}
-      ${assignedOther.length>0 ? `
+      ${n.assigned.length>0 ? `
         <div style="padding:8px 14px 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--primary);font-weight:700;">Assigned to you</div>
-        ${assignedOther.map(t=>`<div class="task-row clickable" style="padding:10px 14px;" data-open-task="${t.id}"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">Due ${fmtDate(t.dueDate)}</div></div></div>`).join('')}
+        ${n.assigned.map(t=>renderRow(t, 'Due '+fmtDate(t.dueDate))).join('')}
       ` : ''}
     </div>
   </div>`;
@@ -2262,11 +2289,36 @@ function renderTaskDetailModal(){
   const t = state.tasks.find(x=>x.id===state.openTaskId);
   if(!t) return '';
   const comments = state.taskComments.filter(cm=>cm.taskId===t.id).sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
-  return `
-  <div class="modal-overlay" data-close-overlay="task-detail">
-    <div class="modal wide" onclick="event.stopPropagation()">
-      <div class="modal-head"><h2>Edit task</h2><button class="modal-close" data-action="close-task-detail">✕</button></div>
-      <div class="modal-body">
+  const editing = !!state.taskEditMode;
+  const c = contactById(t.contactId);
+  const owner = t.ownerId ? state.users.find(u=>u.id===t.ownerId) : null;
+  const assignees = (t.assigneeIds||[]).map(id=>state.users.find(u=>u.id===id)).filter(Boolean);
+
+  const viewBody = `
+        <div class="field-row">
+          <div class="field"><label>Contact</label><div>${c?escapeHtml(c.name):'—'}</div></div>
+          <div class="field"><label>Owner</label><div>${owner?escapeHtml(owner.name):'—'}</div></div>
+        </div>
+        <div class="field"><label>Also notified</label><div>${assignees.length?assignees.map(a=>escapeHtml(a.name)).join(', '):'No one else'}</div></div>
+        <div class="field-row">
+          <div class="field"><label>Due date</label><div>${fmtDate(t.dueDate)}</div></div>
+          <div class="field"><label>Status</label><div><span class="task-due ${dueClass(t.dueDate,t.done)}">${dueLabel(t.dueDate,t.done)}</span></div></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Category</label><div>${t.category?escapeHtml(t.category):'—'}</div></div>
+          <div class="field"><label>Remind me</label><div>${REMINDER_OPTIONS.find(r=>r.value===String(t.reminderDays==null?'':t.reminderDays))?.label||"Don't remind me"}</div></div>
+        </div>
+        <div class="field-row">
+          <div class="field"><label>Priority</label><div style="text-transform:capitalize;">${t.priority||'normal'}</div></div>
+          <div class="field"><label>Repeat</label><div style="text-transform:capitalize;">${t.repeat&&t.repeat!=='none'?t.repeat:'Does not repeat'}</div></div>
+        </div>
+        <div class="page-sub" style="margin-bottom:10px;">Added ${fmtDateTime(t.createdAt)} by ${escapeHtml(t.author||'—')}</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;">
+          <button class="btn primary sm" data-action="edit-task">${ICONS.edit} Edit</button>
+          ${(t.assigneeIds||[]).includes(state.currentUser.id) ? `<button class="btn ghost sm" data-action="leave-task" data-task="${t.id}">Leave this task</button>` : ''}
+        </div>`;
+
+  const editBody = `
         <div class="field"><label>Task</label><input id="td-title" type="text" value="${escapeHtml(t.title)}"></div>
         <div class="field-row">
           <div class="field"><label>Contact</label><select id="td-contact"><option value="">None</option>${state.contacts.map(c=>`<option value="${c.id}" ${c.id===t.contactId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
@@ -2274,10 +2326,9 @@ function renderTaskDetailModal(){
         </div>
         <div class="field">
           <label>Also notify these team members</label>
-          <div style="display:flex;gap:6px;flex-wrap:wrap;">
-            ${state.users.map(u=>`<label class="chip" style="cursor:pointer;"><input type="checkbox" data-td-assignee="${u.id}" ${(t.assigneeIds||[]).includes(u.id)?'checked':''} style="width:auto;margin-right:5px;">${escapeHtml(u.name)}</label>`).join('')}
+          <div style="display:flex;gap:10px;flex-wrap:wrap;">
+            ${state.users.map(u=>`<label style="display:inline-flex;align-items:center;gap:6px;cursor:pointer;font-size:12.5px;"><input type="checkbox" data-td-assignee="${u.id}" ${(t.assigneeIds||[]).includes(u.id)?'checked':''}>${escapeHtml(u.name)}</label>`).join('')}
           </div>
-          ${(t.assigneeIds||[]).includes(state.currentUser.id) ? `<button class="btn ghost sm" style="margin-top:8px;" data-action="leave-task" data-task="${t.id}">Leave this task</button>` : ''}
         </div>
         <div class="field-row">
           <div class="field"><label>Due date</label><input id="td-due" type="date" value="${t.dueDate||''}"></div>
@@ -2291,8 +2342,17 @@ function renderTaskDetailModal(){
           <div class="field"><label>Priority</label><select id="td-priority"><option value="low" ${t.priority==='low'?'selected':''}>Low</option><option value="normal" ${(!t.priority||t.priority==='normal')?'selected':''}>Normal</option><option value="high" ${t.priority==='high'?'selected':''}>High</option></select></div>
           <div class="field"><label>Repeat</label><select id="td-repeat"><option value="none" ${(!t.repeat||t.repeat==='none')?'selected':''}>Doesn't repeat</option><option value="daily" ${t.repeat==='daily'?'selected':''}>Daily</option><option value="weekly" ${t.repeat==='weekly'?'selected':''}>Weekly</option><option value="monthly" ${t.repeat==='monthly'?'selected':''}>Monthly</option></select></div>
         </div>
-        <div class="page-sub" style="margin-bottom:10px;">Added ${fmtDateTime(t.createdAt)} by ${escapeHtml(t.author||'—')}</div>
-        <button class="btn primary sm" data-action="save-task-edit" data-task="${t.id}">Save changes</button>
+        <div style="display:flex;gap:8px;">
+          <button class="btn primary sm" data-action="save-task-edit" data-task="${t.id}">Save changes</button>
+          <button class="btn ghost sm" data-action="cancel-task-edit">Cancel</button>
+        </div>`;
+
+  return `
+  <div class="modal-overlay" data-close-overlay="task-detail">
+    <div class="modal wide" onclick="event.stopPropagation()">
+      <div class="modal-head"><h2>${editing?'Edit task':escapeHtml(t.title)}</h2><button class="modal-close" data-action="close-task-detail">✕</button></div>
+      <div class="modal-body">
+        ${editing ? editBody : viewBody}
 
         <div class="tile" style="margin-top:14px;">
           <div class="tile-h"><h3>Comments</h3></div>
@@ -2353,6 +2413,25 @@ function bindEvents(){
   if(toggleSidebar) toggleSidebar.addEventListener('click', ()=>{ state.sidebarOpen=!state.sidebarOpen; render(); });
   const closeSidebarBackdrop = app.querySelector('[data-action="close-sidebar"]');
   if(closeSidebarBackdrop) closeSidebarBackdrop.addEventListener('click', ()=>{ state.sidebarOpen=false; render(); });
+  app.querySelectorAll('[data-action="mark-notif-read"]').forEach(el=>el.addEventListener('click', async (e)=>{
+    e.stopPropagation();
+    const id = el.getAttribute('data-task'); const t = state.tasks.find(x=>x.id===id); if(!t) return;
+    const previous = t.readBy || [];
+    t.readBy = [...previous, state.currentUser.id];
+    const result = await storeSet('task:'+t.id, t);
+    if(!result){ t.readBy = previous; flashToast("Couldn't mark that as read."); render(); return; }
+    render();
+  }));
+  const markAllRead = app.querySelector('[data-action="mark-all-notif-read"]');
+  if(markAllRead) markAllRead.addEventListener('click', async ()=>{
+    const n = getNotifications();
+    const all = [...n.overdue, ...n.reminders, ...n.assigned];
+    for(const t of all){
+      t.readBy = [...(t.readBy||[]), state.currentUser.id];
+      await storeSet('task:'+t.id, t);
+    }
+    flashToast('All caught up'); render();
+  });
 
   app.querySelectorAll('[data-contact-filter]').forEach(el=>el.addEventListener('click',()=>{ state.contactFilter=el.getAttribute('data-contact-filter'); render(); }));
   app.querySelectorAll('[data-lead-filter]').forEach(el=>el.addEventListener('click',()=>{ state.leadFilter=el.getAttribute('data-lead-filter'); render(); }));
@@ -2393,8 +2472,10 @@ function bindEvents(){
 
   app.querySelectorAll('[data-open-contact]').forEach(el=>el.addEventListener('click',(e)=>{ e.stopPropagation(); state.openContactId=el.getAttribute('data-open-contact'); render(); }));
   app.querySelectorAll('[data-open-opp]').forEach(el=>el.addEventListener('click',(e)=>{ e.stopPropagation(); state.openOppId=el.getAttribute('data-open-opp'); render(); }));
-  app.querySelectorAll('[data-open-task]').forEach(el=>el.addEventListener('click',(e)=>{ e.stopPropagation(); state.openTaskId=el.getAttribute('data-open-task'); state.notifOpen=false; render(); }));
+  app.querySelectorAll('[data-open-task]').forEach(el=>el.addEventListener('click',(e)=>{ e.stopPropagation(); state.openTaskId=el.getAttribute('data-open-task'); state.taskEditMode=false; state.notifOpen=false; render(); }));
   const closeTaskDetail = app.querySelector('[data-action="close-task-detail"]'); if(closeTaskDetail) closeTaskDetail.addEventListener('click',()=>{ state.openTaskId=null; render(); });
+  const editTaskBtn = app.querySelector('[data-action="edit-task"]'); if(editTaskBtn) editTaskBtn.addEventListener('click',()=>{ state.taskEditMode=true; render(); });
+  const cancelTaskEdit = app.querySelector('[data-action="cancel-task-edit"]'); if(cancelTaskEdit) cancelTaskEdit.addEventListener('click',()=>{ state.taskEditMode=false; render(); });
 
   app.querySelectorAll('[data-quick-date]').forEach(el=>el.addEventListener('click',()=>{
     const days = Number(el.getAttribute('data-quick-date'));
@@ -2442,8 +2523,10 @@ function bindEvents(){
     t.reminderDays = reminderVal===''? null : Number(reminderVal);
     t.priority = document.getElementById('td-priority').value;
     t.repeat = document.getElementById('td-repeat').value;
+    t.readBy = []; // something changed — worth re-surfacing to everyone
     const result = await storeSet('task:'+t.id, t);
     if(!result){ flashToast("Couldn't save that change."); return; }
+    state.taskEditMode = false;
     flashToast('Task updated'); render();
   });
   const leaveTaskBtn = app.querySelector('[data-action="leave-task"]');
