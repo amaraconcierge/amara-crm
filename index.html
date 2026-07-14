@@ -74,6 +74,12 @@ input,textarea,select{font-family:var(--sans);}
 .nav-item:hover{background:rgba(251,247,236,0.06);color:#fff;}
 .nav-item.active{background:rgba(251,247,236,0.09);color:#fff;border-left-color:var(--accent-ochre);}
 .nav-item svg{width:15px;height:15px;flex-shrink:0;opacity:0.9;}
+.btn svg{width:13px;height:13px;flex-shrink:0;}
+.btn.sm svg{width:12px;height:12px;}
+.icon-btn svg{width:16px;height:16px;}
+.empty-state svg{width:28px;height:28px;color:var(--ink-faint);}
+.act-icon svg, .modal-close svg{width:14px;height:14px;}
+svg{max-width:100%;}
 .nav-count{margin-left:auto;font-size:10px;background:rgba(251,247,236,0.12);padding:1px 7px;border-radius:20px;color:var(--cream-on-teal-mu);}
 .sidebar-footer{margin-top:auto;padding-top:12px;border-top:1px solid var(--rule-on-teal);}
 .user-chip{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;cursor:pointer;}
@@ -584,7 +590,8 @@ let state = {
   homeLayout:null, homeLayoutDraft:null, showCustomizeHome:false, auditResult:null,
   profileError:'', profileNotice:'', profileLoading:false,
   passwordError:'', passwordNotice:'', passwordLoading:false,
-  picklists:[], showManageCategory:false, newCategoryDraft:''
+  picklists:[], showManageCategory:false, newCategoryDraft:'',
+  contactSearch:'', leadSearch:'', pipelineSearch:'', taskSearch:'', campaignSearch:'', productSearch:''
 };
 
 /* ============ bootstrap ============ */
@@ -659,6 +666,15 @@ async function loadAll(){
 }
 
 /* ============ derived ============ */
+function matchesSearch(query, ...fields){
+  if(!query || !query.trim()) return true;
+  const q = query.trim().toLowerCase();
+  return fields.some(f => String(f||'').toLowerCase().includes(q));
+}
+function renderLocalSearch(key, value, placeholder){
+  return `<div class="search-wrap" style="max-width:320px;margin-bottom:14px;">${ICONS.search}<input type="text" placeholder="${placeholder}" value="${escapeHtml(value||'')}" data-local-search="${key}"></div>`;
+}
+
 function contactById(id){ return state.contacts.find(c=>c.id===id); }
 function notesForContact(id){ return state.notes.filter(n=>n.contactId===id); }
 function oppsForContact(id){ return state.opps.filter(o=>o.contactId===id); }
@@ -684,6 +700,11 @@ function dueLabel(dueDate,done){
 }
 
 function taskCategories(){ return (state.picklists||[]).filter(p=>p.listKey==='task_categories'); }
+
+function tasksAssignedToMe(){
+  if(!state.currentUser) return [];
+  return state.tasks.filter(t=>!t.done && (t.ownerId===state.currentUser.id || (t.assigneeIds||[]).includes(state.currentUser.id)));
+}
 
 function tasksWithReminderDue(){
   const today = todayISO();
@@ -1143,7 +1164,7 @@ function renderTopbar(){
     <div class="search-wrap">${ICONS.search}<input type="text" placeholder="Search patients, companies, contacts…" value="${escapeHtml(state.search)}" data-input="global-search"></div>
     <button class="btn ochre" data-action="new-contact">${ICONS.plus} Contact</button>
     <button class="btn primary" data-action="new-opp">${ICONS.plus} Opportunity</button>
-    <button class="icon-btn" data-action="toggle-notif" title="Notifications">${ICONS.bell}${(stats.overdue.length+tasksWithReminderDue().length)>0?`<span class="bubble">${stats.overdue.length+tasksWithReminderDue().length}</span>`:''}</button>
+    <button class="icon-btn" data-action="toggle-notif" title="Notifications">${ICONS.bell}${(()=>{ const c = stats.overdue.length + tasksWithReminderDue().length + tasksAssignedToMe().filter(t=>!stats.overdue.some(o=>o.id===t.id) && !tasksWithReminderDue().some(r=>r.id===t.id)).length; return c>0?`<span class="bubble">${c}</span>`:''; })()}</button>
     <div class="avatar-chip" data-nav="profile" title="View your profile">
       <div class="av" style="background:${avatarColor(state.currentUser.id)}">${initials(state.currentUser.name)}</div>
       <div><div class="nm">${escapeHtml(state.currentUser.name)}</div><div class="role">${state.currentUser.role}</div></div>
@@ -1154,11 +1175,14 @@ function renderTopbar(){
 function renderNotifPanel(){
   const stats = computeStats();
   const reminders = tasksWithReminderDue();
+  const overdueIds = new Set(stats.overdue.map(t=>t.id));
+  const reminderIds = new Set(reminders.map(t=>t.id));
+  const assignedOther = tasksAssignedToMe().filter(t=>!overdueIds.has(t.id) && !reminderIds.has(t.id));
   return `
   <div style="position:fixed;inset:0;z-index:400;" data-close-overlay="notif">
     <div class="tile" style="position:absolute;right:26px;top:60px;width:340px;max-height:460px;overflow-y:auto;margin:0;padding:0;" onclick="event.stopPropagation()">
       <div class="tile-h" style="padding:12px 14px;margin:0;border-bottom:1px solid var(--rule);"><h3>Notifications</h3></div>
-      ${stats.overdue.length===0 && reminders.length===0 ? `<div class="empty-state" style="padding:24px;"><p>Nothing needs attention. Nice.</p></div>` : ''}
+      ${stats.overdue.length===0 && reminders.length===0 && assignedOther.length===0 ? `<div class="empty-state" style="padding:24px;"><p>Nothing needs attention. Nice.</p></div>` : ''}
       ${stats.overdue.length>0 ? `
         <div style="padding:8px 14px 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--sos-red);font-weight:700;">Overdue</div>
         ${stats.overdue.map(t=>`<div class="task-row clickable" style="padding:10px 14px;" data-open-task="${t.id}"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">${dueLabel(t.dueDate,t.done)}</div></div></div>`).join('')}
@@ -1166,6 +1190,10 @@ function renderNotifPanel(){
       ${reminders.length>0 ? `
         <div style="padding:8px 14px 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--accent-ochre);font-weight:700;">Reminders</div>
         ${reminders.map(t=>`<div class="task-row clickable" style="padding:10px 14px;" data-open-task="${t.id}"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">Due ${fmtDate(t.dueDate)}</div></div></div>`).join('')}
+      ` : ''}
+      ${assignedOther.length>0 ? `
+        <div style="padding:8px 14px 2px;font-size:9.5px;text-transform:uppercase;letter-spacing:0.08em;color:var(--primary);font-weight:700;">Assigned to you</div>
+        ${assignedOther.map(t=>`<div class="task-row clickable" style="padding:10px 14px;" data-open-task="${t.id}"><div style="flex:1"><div class="task-title">${escapeHtml(t.title)}</div><div class="task-sub">Due ${fmtDate(t.dueDate)}</div></div></div>`).join('')}
       ` : ''}
     </div>
   </div>`;
@@ -1325,6 +1353,7 @@ function renderTaskRow(t){
 function renderContacts(){
   let list = state.contacts;
   if(state.contactFilter!=='all') list = list.filter(c=>c.type===state.contactFilter);
+  list = list.filter(c=>matchesSearch(state.contactSearch, c.name, c.company, c.email, c.phone));
   list = sortRows(list, {name:'name', company:'company', type:'type'});
   return `
     <div class="page-head">
@@ -1332,6 +1361,7 @@ function renderContacts(){
       <div class="head-actions"><button class="btn ghost" data-action="export-contacts">${ICONS.download} Export CSV</button><button class="btn ochre" data-action="new-contact">${ICONS.plus} New contact</button></div>
     </div>
     ${motif()}
+    ${renderLocalSearch('contactSearch', state.contactSearch, 'Search contacts by name, company, email, phone…')}
     <div class="filter-row">
       <div class="chip ${state.contactFilter==='all'?'active':''}" data-contact-filter="all">All (${state.contacts.length})</div>
       ${CONTACT_TYPES.map(t=>`<div class="chip ${state.contactFilter===t?'active':''}" data-contact-filter="${t}">${t}s (${state.contacts.filter(c=>c.type===t).length})</div>`).join('')}
@@ -1440,6 +1470,7 @@ function renderContactSlideover(){
 function renderLeads(){
   let list = state.leads;
   if(state.leadFilter!=='all') list = list.filter(l=>l.status===state.leadFilter);
+  list = list.filter(l=>matchesSearch(state.leadSearch, l.name, l.company, l.email, l.phone, l.source));
   const openCount = state.leads.filter(l=>l.status!=='converted'&&l.status!=='disqualified').length;
   return `
     <div class="page-head">
@@ -1447,6 +1478,7 @@ function renderLeads(){
       <div class="head-actions"><button class="btn ghost" data-action="export-leads">${ICONS.download} Export CSV</button><button class="btn ochre" data-action="new-lead">${ICONS.plus} New lead</button></div>
     </div>
     ${motif()}
+    ${renderLocalSearch('leadSearch', state.leadSearch, 'Search leads by name, company, email, phone…')}
     <div class="filter-row">
       <div class="chip ${state.leadFilter==='all'?'active':''}" data-lead-filter="all">All (${state.leads.length})</div>
       ${LEAD_STATUSES.map(ls=>`<div class="chip ${state.leadFilter===ls.id?'active':''}" data-lead-filter="${ls.id}">${ls.label} (${state.leads.filter(l=>l.status===ls.id).length})</div>`).join('')}
@@ -1519,6 +1551,10 @@ function renderPipeline(){
   const totalOpen = state.opps.filter(o=>o.stage!=='won'&&o.stage!=='lost').length;
   const pipelineValue = state.opps.filter(o=>o.stage!=='won'&&o.stage!=='lost').reduce((s,o)=>s+(Number(o.value)||0),0);
   const pipeView = state.pipelineView || 'kanban';
+  const searched = state.opps.filter(o=>{
+    const c = contactById(o.contactId);
+    return matchesSearch(state.pipelineSearch, o.title, o.source, c?c.name:'', c?c.company:'');
+  });
   return `
     <div class="page-head">
       <div><div class="eyebrow">${totalOpen} open · ${fmtMoney(pipelineValue)} in play</div><h1>Pipeline</h1></div>
@@ -1529,10 +1565,11 @@ function renderPipeline(){
       </div>
     </div>
     ${motif()}
+    ${renderLocalSearch('pipelineSearch', state.pipelineSearch, 'Search opportunities by title, contact, source…')}
     ${pipeView==='kanban' ? `
     <div class="kanban">
       ${STAGES.map(s=>{
-        const items = state.opps.filter(o=>o.stage===s.id);
+        const items = searched.filter(o=>o.stage===s.id);
         const sum = items.reduce((a,o)=>a+(Number(o.value)||0),0);
         return `
         <div class="kanban-col" data-stage-col="${s.id}">
@@ -1548,13 +1585,13 @@ function renderPipeline(){
     </div>`
     : `
     <div class="filter-row">
-      <div class="chip ${(state.pipelineStageFilter||'all')==='all'?'active':''}" data-pipeline-stage-filter="all">All (${state.opps.length})</div>
-      ${STAGES.map(s=>`<div class="chip ${state.pipelineStageFilter===s.id?'active':''}" data-pipeline-stage-filter="${s.id}">${s.label} (${state.opps.filter(o=>o.stage===s.id).length})</div>`).join('')}
+      <div class="chip ${(state.pipelineStageFilter||'all')==='all'?'active':''}" data-pipeline-stage-filter="all">All (${searched.length})</div>
+      ${STAGES.map(s=>`<div class="chip ${state.pipelineStageFilter===s.id?'active':''}" data-pipeline-stage-filter="${s.id}">${s.label} (${searched.filter(o=>o.stage===s.id).length})</div>`).join('')}
     </div>
     <div class="tile" style="padding:0;overflow-x:auto;">
       <table>
         <thead><tr><th data-sort="title">Opportunity${sortArrow('title')}</th><th>Contact</th><th>Email</th><th>Phone</th><th data-sort="stage">Stage${sortArrow('stage')}</th><th data-sort="value">Value${sortArrow('value')}</th><th data-sort="expectedClose">Expected close${sortArrow('expectedClose')}</th><th>Created</th></tr></thead>
-        <tbody>${sortRows((state.pipelineStageFilter&&state.pipelineStageFilter!=='all')?state.opps.filter(o=>o.stage===state.pipelineStageFilter):state.opps,{title:'title',stage:'stage',value:'value',expectedClose:'expectedClose'}).map(o=>{ const c=contactById(o.contactId); return `
+        <tbody>${sortRows((state.pipelineStageFilter&&state.pipelineStageFilter!=='all')?searched.filter(o=>o.stage===state.pipelineStageFilter):searched,{title:'title',stage:'stage',value:'value',expectedClose:'expectedClose'}).map(o=>{ const c=contactById(o.contactId); return `
           <tr class="clickable" data-open-opp="${o.id}">
             <td><strong>${escapeHtml(o.title)}</strong></td>
             <td style="color:var(--ink-muted)">${c?escapeHtml(c.name):'—'}${c&&c.company?' <span style="color:var(--ink-faint);">— '+escapeHtml(c.company)+'</span>':''}</td>
@@ -1597,17 +1634,19 @@ function renderForecast(){
 
 /* ============ PRODUCTS / INVENTORY ============ */
 function renderProducts(){
+  const list = state.products.filter(p=>matchesSearch(state.productSearch, p.name, p.sku, p.description));
   return `
     <div class="page-head">
       <div><div class="eyebrow">${state.products.length} product${state.products.length===1?'':'s'}</div><h1>Products</h1><div class="page-sub">Your catalog — pick these as line items on opportunities</div></div>
       <div class="head-actions"><button class="btn ghost" data-action="export-products">${ICONS.download} Export CSV</button><button class="btn ochre" data-action="new-product">${ICONS.plus} New product</button></div>
     </div>
     ${motif()}
+    ${renderLocalSearch('productSearch', state.productSearch, 'Search products by name, SKU, description…')}
     <div class="tile" style="padding:0;overflow-x:auto;">
-      ${state.products.length===0?`<div class="empty-state"><img class="empty-logo" src="${LOGO_URI}"><p>No products yet. Add the services/packages you sell.</p></div>`:`
+      ${list.length===0?`<div class="empty-state"><img class="empty-logo" src="${LOGO_URI}"><p>No products yet. Add the services/packages you sell.</p></div>`:`
       <table>
         <thead><tr><th>Name</th><th>SKU</th><th>Price</th><th>Description</th><th></th></tr></thead>
-        <tbody>${state.products.map(p=>`
+        <tbody>${list.map(p=>`
           <tr>
             <td><strong>${escapeHtml(p.name)}</strong></td>
             <td style="color:var(--ink-muted)">${escapeHtml(p.sku||'—')}</td>
@@ -1635,17 +1674,19 @@ function renderNewProductModal(){
 
 /* ============ CAMPAIGNS ============ */
 function renderCampaigns(){
+  const list = state.campaigns.filter(c=>matchesSearch(state.campaignSearch, c.name, c.channel));
   return `
     <div class="page-head">
       <div><div class="eyebrow">${state.campaigns.length} campaign${state.campaigns.length===1?'':'s'}</div><h1>Campaigns</h1><div class="page-sub">Track where leads &amp; opportunities come from, and what they cost</div></div>
       <button class="btn ochre" data-action="new-campaign">${ICONS.plus} New campaign</button>
     </div>
     ${motif()}
+    ${renderLocalSearch('campaignSearch', state.campaignSearch, 'Search campaigns by name, channel…')}
     <div class="tile" style="padding:0;overflow-x:auto;">
-      ${state.campaigns.length===0?`<div class="empty-state"><img class="empty-logo" src="${LOGO_URI}"><p>No campaigns yet.</p></div>`:`
+      ${list.length===0?`<div class="empty-state"><img class="empty-logo" src="${LOGO_URI}"><p>No campaigns yet.</p></div>`:`
       <table>
         <thead><tr><th>Name</th><th>Channel</th><th>Status</th><th>Cost</th><th>Leads</th><th>Deals won</th><th>ROI</th><th></th></tr></thead>
-        <tbody>${state.campaigns.map(c=>{ const cs=campaignStats(c); return `
+        <tbody>${list.map(c=>{ const cs=campaignStats(c); return `
           <tr>
             <td><strong>${escapeHtml(c.name)}</strong></td>
             <td style="color:var(--ink-muted)">${escapeHtml(c.channel||'—')}</td>
@@ -1736,6 +1777,10 @@ function renderTasks(){
   if(state.taskFilter==='open') list = list.filter(t=>!t.done);
   if(state.taskFilter==='overdue') list = list.filter(t=>!t.done && t.dueDate && t.dueDate<todayISO());
   if(state.taskFilter==='done') list = list.filter(t=>t.done);
+  list = list.filter(t=>{
+    const c = contactById(t.contactId);
+    return matchesSearch(state.taskSearch, t.title, t.category, c?c.name:'');
+  });
   list = [...list].sort((a,b)=>(a.dueDate||'9999').localeCompare(b.dueDate||'9999'));
   const overdueCount = state.tasks.filter(t=>!t.done && t.dueDate && t.dueDate<todayISO()).length;
   const taskView = state.taskView || 'list';
@@ -1749,6 +1794,7 @@ function renderTasks(){
       </div>
     </div>
     ${motif()}
+    ${renderLocalSearch('taskSearch', state.taskSearch, 'Search tasks by title, category, contact…')}
     ${taskView==='list' ? `
     <div class="filter-row">
       <div class="chip ${state.taskFilter==='open'?'active':''}" data-task-filter="open">Open</div>
@@ -1757,16 +1803,16 @@ function renderTasks(){
       <div class="chip ${state.taskFilter==='all'?'active':''}" data-task-filter="all">All</div>
     </div>
     <div class="tile">${list.length===0?`<div class="empty-state"><img class="empty-logo" src="${LOGO_URI}"><p>Nothing here. Enjoy the quiet.</p></div>`:list.map(t=>renderTaskRow(t)).join('')}</div>`
-    : renderTaskKanban() }
+    : renderTaskKanban(list) }
     ${state.showCardFields ? renderCardFieldsModal() : ''}`;
 }
 
-function renderTaskKanban(){
+function renderTaskKanban(taskList){
   const fields = state.taskCardFields || {owner:true, due:true, priority:true, contact:true};
   return `
     <div class="kanban">
       ${TASK_STATUSES.map(st=>{
-        const items = state.tasks.filter(t=>(t.status||'Not Started')===st);
+        const items = taskList.filter(t=>(t.status||'Not Started')===st);
         return `
         <div class="kanban-col" data-task-status-col="${st}">
           <div class="kanban-col-head"><div class="kanban-col-title">${st}</div><div class="kanban-count">${items.length}</div></div>
@@ -2175,6 +2221,13 @@ function renderNewTaskModal(){
         </div>
         <div class="field"><label>Related contact</label><select id="nt-contact"><option value="">None</option>${state.contacts.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}</select></div>
         <div class="field"><label>Owner</label><select id="nt-owner">${state.users.map(u=>`<option value="${u.id}" ${u.id===state.currentUser.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div>
+        <div class="field">
+          <label>Also notify these team members</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${state.users.map(u=>`<label class="chip" style="cursor:pointer;"><input type="checkbox" data-nt-assignee="${u.id}" style="width:auto;margin-right:5px;">${escapeHtml(u.name)}</label>`).join('')}
+          </div>
+          <div class="page-sub" style="margin-top:4px;">Everyone checked here will see this task in their notifications, and can leave it once their part is done.</div>
+        </div>
         <div class="field-row">
           <div class="field"><label>Category</label><select id="nt-category"><option value="">None</option>${taskCategories().map(c=>`<option value="${escapeHtml(c.label)}">${escapeHtml(c.label)}</option>`).join('')}</select></div>
           <div class="field"><label>Remind me</label><select id="nt-reminder">${REMINDER_OPTIONS.map(r=>`<option value="${r.value}">${r.label}</option>`).join('')}</select></div>
@@ -2218,6 +2271,13 @@ function renderTaskDetailModal(){
         <div class="field-row">
           <div class="field"><label>Contact</label><select id="td-contact"><option value="">None</option>${state.contacts.map(c=>`<option value="${c.id}" ${c.id===t.contactId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
           <div class="field"><label>Owner</label><select id="td-owner">${state.users.map(u=>`<option value="${u.id}" ${u.id===t.ownerId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div>
+        </div>
+        <div class="field">
+          <label>Also notify these team members</label>
+          <div style="display:flex;gap:6px;flex-wrap:wrap;">
+            ${state.users.map(u=>`<label class="chip" style="cursor:pointer;"><input type="checkbox" data-td-assignee="${u.id}" ${(t.assigneeIds||[]).includes(u.id)?'checked':''} style="width:auto;margin-right:5px;">${escapeHtml(u.name)}</label>`).join('')}
+          </div>
+          ${(t.assigneeIds||[]).includes(state.currentUser.id) ? `<button class="btn ghost sm" style="margin-top:8px;" data-action="leave-task" data-task="${t.id}">Leave this task</button>` : ''}
         </div>
         <div class="field-row">
           <div class="field"><label>Due date</label><input id="td-due" type="date" value="${t.dueDate||''}"></div>
@@ -2273,6 +2333,16 @@ function renderCsvFallbackModal(){
 /* ============ EVENTS ============ */
 function bindEvents(){
   const app = document.getElementById('app');
+
+  app.querySelectorAll('[data-local-search]').forEach(el=>{
+    el.addEventListener('input',(e)=>{
+      const key = el.getAttribute('data-local-search');
+      state[key] = e.target.value;
+      render();
+      const fresh = document.querySelector(`[data-local-search="${key}"]`);
+      if(fresh){ fresh.focus(); const v=fresh.value; fresh.value=''; fresh.value=v; }
+    });
+  });
 
   app.querySelectorAll('[data-nav]').forEach(el=>el.addEventListener('click',(e)=>{ e.preventDefault(); state.view=el.getAttribute('data-nav'); state.search=''; state.sidebarOpen=false; render(); }));
 
@@ -2364,6 +2434,7 @@ function bindEvents(){
     t.title = title;
     t.contactId = document.getElementById('td-contact').value || null;
     t.ownerId = document.getElementById('td-owner').value || null;
+    t.assigneeIds = [...document.querySelectorAll('[data-td-assignee]:checked')].map(el=>el.getAttribute('data-td-assignee'));
     t.dueDate = document.getElementById('td-due').value;
     t.status = status;
     t.done = (status === 'Completed');
@@ -2374,6 +2445,16 @@ function bindEvents(){
     const result = await storeSet('task:'+t.id, t);
     if(!result){ flashToast("Couldn't save that change."); return; }
     flashToast('Task updated'); render();
+  });
+  const leaveTaskBtn = app.querySelector('[data-action="leave-task"]');
+  if(leaveTaskBtn) leaveTaskBtn.addEventListener('click', async ()=>{
+    const id = leaveTaskBtn.getAttribute('data-task');
+    const t = state.tasks.find(x=>x.id===id); if(!t) return;
+    const previous = t.assigneeIds || [];
+    t.assigneeIds = previous.filter(uidVal=>uidVal!==state.currentUser.id);
+    const result = await storeSet('task:'+t.id, t);
+    if(!result){ t.assigneeIds = previous; flashToast("Couldn't leave that task."); render(); return; }
+    flashToast("You've left this task"); state.openTaskId = null; render();
   });
 
   app.querySelectorAll('[data-close-overlay]').forEach(el=>el.addEventListener('click',()=>{
@@ -2439,7 +2520,8 @@ function bindEvents(){
     const title = document.getElementById('nt-title').value.trim();
     if(!title){ flashToast('Task title is required'); return; }
     const reminderVal = document.getElementById('nt-reminder').value;
-    const t = { id:uid('task'), title, contactId:document.getElementById('nt-contact').value||null, oppId:null, ownerId:document.getElementById('nt-owner').value||state.currentUser.id, dueDate:document.getElementById('nt-due').value, priority:document.getElementById('nt-priority').value, repeat:document.getElementById('nt-repeat').value, category:document.getElementById('nt-category').value||null, reminderDays: reminderVal===''?null:Number(reminderVal), status:'Not Started', done:false, author:state.currentUser.name, createdAt:todayISO() };
+    const assigneeIds = [...document.querySelectorAll('[data-nt-assignee]:checked')].map(el=>el.getAttribute('data-nt-assignee'));
+    const t = { id:uid('task'), title, contactId:document.getElementById('nt-contact').value||null, oppId:null, ownerId:document.getElementById('nt-owner').value||state.currentUser.id, assigneeIds, dueDate:document.getElementById('nt-due').value, priority:document.getElementById('nt-priority').value, repeat:document.getElementById('nt-repeat').value, category:document.getElementById('nt-category').value||null, reminderDays: reminderVal===''?null:Number(reminderVal), status:'Not Started', done:false, author:state.currentUser.name, createdAt:todayISO() };
     const result = await storeSet('task:'+t.id, t);
     if(!result){ flashToast("Couldn't save that task — please try again."); return; }
     state.tasks.push(t); state.showNewTask=false; flashToast('Task added'); render();
