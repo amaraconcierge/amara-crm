@@ -261,8 +261,10 @@ tr.clickable:hover{background:rgba(194,138,58,0.05);cursor:pointer;}
 .onboard-step-title{font-size:12px;font-weight:600;display:flex;align-items:center;}
 
 @media (max-width:760px){
-  .sidebar{position:fixed;left:-260px;transition:left .2s ease;z-index:150;}
+  .sidebar{position:fixed;left:-260px;transition:left .2s ease;z-index:200;box-shadow:4px 0 24px rgba(0,0,0,0.25);}
   .sidebar.open{left:0;}
+  .sidebar-backdrop{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.4);z-index:190;}
+  .sidebar-backdrop.open{display:block;}
   .topbar{padding:10px 14px;gap:8px;}
   .topbar .btn.ochre, .topbar .btn.primary{display:none;} /* redundant with each page's own "New…" button, and there's no room for them here */
   .content{padding:16px 14px;}
@@ -283,8 +285,8 @@ tr.clickable:hover{background:rgba(194,138,58,0.05);cursor:pointer;}
   .widget-picker-grid{grid-template-columns:1fr;}
   h1{font-size:22px !important;}
 }
-.mobile-toggle{display:none;background:none;border:none;cursor:pointer;color:var(--ink);}
-@media (max-width:760px){.mobile-toggle{display:block;}}
+.mobile-toggle{display:none;background:none;border:none;cursor:pointer;color:var(--ink);width:36px;height:36px;flex-shrink:0;align-items:center;justify-content:center;}
+@media (max-width:760px){.mobile-toggle{display:flex;}}
 
 button:focus-visible,.chip:focus-visible,.nav-item:focus-visible,th:focus-visible{outline:2px solid var(--accent-ochre);outline-offset:2px;}
 @media (prefers-reduced-motion: reduce){*{animation:none !important;transition:none !important;}}
@@ -469,7 +471,16 @@ async function deleteAllRows(table){
   catch(e){ console.error('deleteAllRows failed', table, e.message||e); }
 }
 
-function uid(prefix){ return prefix+'_'+Date.now().toString(36)+Math.random().toString(36).slice(2,7); }
+function uid(prefix){
+  // Every table's id column is a real Postgres `uuid` type — this MUST return a valid UUID,
+  // not a custom string, or every insert gets silently rejected by the database.
+  if(typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  // Fallback for older browsers without crypto.randomUUID
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c){
+    const r = Math.random()*16|0, v = c==='x' ? r : (r&0x3|0x8);
+    return v.toString(16);
+  });
+}
 function todayISO(){ return new Date().toISOString().slice(0,10); }
 function nowISO(){ return new Date().toISOString(); }
 function fmtDateTime(iso){
@@ -916,6 +927,7 @@ function renderInner(){
   }
   app.innerHTML = `
     ${renderSidebar()}
+    <div class="sidebar-backdrop ${state.sidebarOpen?'open':''}" data-action="close-sidebar"></div>
     <div class="main">
       ${renderTopbar()}
       <div class="content linen-cream">${renderView()}</div>
@@ -1965,7 +1977,7 @@ function renderTeam(){
 function renderProfile(){
   const u = state.currentUser;
   return `
-    <div class="page-head"><div><div class="eyebrow">Your account · ${escapeHtml(u.role)}</div><h1>Profile</h1></div></div>
+    <div class="page-head"><div><div class="eyebrow"><a href="#" data-nav="home" style="color:var(--accent-ochre);font-weight:600;">← Back to Home</a> · ${escapeHtml(u.role)}</div><h1>Profile</h1></div></div>
     ${motif()}
     <div class="tile" style="max-width:440px;">
       <div class="tile-h"><h3>Your details</h3></div>
@@ -2262,13 +2274,15 @@ function renderCsvFallbackModal(){
 function bindEvents(){
   const app = document.getElementById('app');
 
-  app.querySelectorAll('[data-nav]').forEach(el=>el.addEventListener('click',(e)=>{ e.preventDefault(); state.view=el.getAttribute('data-nav'); state.search=''; render(); }));
+  app.querySelectorAll('[data-nav]').forEach(el=>el.addEventListener('click',(e)=>{ e.preventDefault(); state.view=el.getAttribute('data-nav'); state.search=''; state.sidebarOpen=false; render(); }));
 
   const searchInput = app.querySelector('[data-input="global-search"]');
   if(searchInput) searchInput.addEventListener('input',(e)=>{ state.search=e.target.value; render(); const el=document.querySelector('[data-input="global-search"]'); if(el){ el.focus(); const v=el.value; el.value=''; el.value=v; } });
 
   const toggleSidebar = app.querySelector('[data-action="toggle-sidebar"]');
   if(toggleSidebar) toggleSidebar.addEventListener('click', ()=>{ state.sidebarOpen=!state.sidebarOpen; render(); });
+  const closeSidebarBackdrop = app.querySelector('[data-action="close-sidebar"]');
+  if(closeSidebarBackdrop) closeSidebarBackdrop.addEventListener('click', ()=>{ state.sidebarOpen=false; render(); });
 
   app.querySelectorAll('[data-contact-filter]').forEach(el=>el.addEventListener('click',()=>{ state.contactFilter=el.getAttribute('data-contact-filter'); render(); }));
   app.querySelectorAll('[data-lead-filter]').forEach(el=>el.addEventListener('click',()=>{ state.leadFilter=el.getAttribute('data-lead-filter'); render(); }));
@@ -2327,7 +2341,9 @@ function bindEvents(){
     const text = document.getElementById('new-comment-text').value.trim();
     if(!text) return;
     const cm = { id:uid('taskComment'), taskId:addCommentBtn.getAttribute('data-task'), text, author:state.currentUser.name, createdAt:nowISO() };
-    await storeSet('taskComment:'+cm.id, cm); state.taskComments.push(cm); render();
+    const result = await storeSet('taskComment:'+cm.id, cm);
+    if(!result){ flashToast("Couldn't post that comment — please try again."); return; }
+    state.taskComments.push(cm); render();
   });
   const deleteTaskBtn = app.querySelector('[data-action="delete-task"]');
   if(deleteTaskBtn) deleteTaskBtn.addEventListener('click', async ()=>{
@@ -2394,7 +2410,8 @@ function bindEvents(){
     const c = { id:uid('contact'), type:document.getElementById('nc-type').value, name, company:document.getElementById('nc-company').value.trim(), email:document.getElementById('nc-email').value.trim(), phone:document.getElementById('nc-phone').value.trim(), tags:document.getElementById('nc-tags').value.split(',').map(s=>s.trim()).filter(Boolean),
       address:{ street:document.getElementById('nc-addr-street').value.trim(), city:document.getElementById('nc-addr-city').value.trim(), state:document.getElementById('nc-addr-state').value.trim(), zip:document.getElementById('nc-addr-zip').value.trim(), country:document.getElementById('nc-addr-country').value.trim() },
       createdAt:todayISO() };
-    await storeSet('contact:'+c.id, c);
+    const result = await storeSet('contact:'+c.id, c);
+    if(!result){ flashToast("Couldn't save that contact — please try again."); return; }
     state.contacts.push(c); state.contacts.sort((a,b)=>a.name.localeCompare(b.name));
     state.showNewContact=false; flashToast('Contact added'); render();
   });
@@ -2410,7 +2427,9 @@ function bindEvents(){
     const campaignEl = document.getElementById('no-campaign');
     const stageVal = document.getElementById('no-stage').value;
     const o = { id:uid('opp'), title, contactId, value:Number(document.getElementById('no-value').value)||0, expectedClose:document.getElementById('no-close').value, stage:stageVal, source:document.getElementById('no-source').value.trim(), campaignId:campaignEl?(campaignEl.value||null):null, createdAt:nowISO(), stageHistory:[{stage:stageVal, at:nowISO()}] };
-    await storeSet('opp:'+o.id, o); state.opps.push(o); state.showNewOpp=false; flashToast('Opportunity added'); render();
+    const result = await storeSet('opp:'+o.id, o);
+    if(!result){ flashToast("Couldn't save that opportunity — please try again."); return; }
+    state.opps.push(o); state.showNewOpp=false; flashToast('Opportunity added'); render();
   });
 
   app.querySelectorAll('[data-action="new-task"]').forEach(b=>b.addEventListener('click',()=>{ state.showNewTask=true; render(); }));
@@ -2421,13 +2440,18 @@ function bindEvents(){
     if(!title){ flashToast('Task title is required'); return; }
     const reminderVal = document.getElementById('nt-reminder').value;
     const t = { id:uid('task'), title, contactId:document.getElementById('nt-contact').value||null, oppId:null, ownerId:document.getElementById('nt-owner').value||state.currentUser.id, dueDate:document.getElementById('nt-due').value, priority:document.getElementById('nt-priority').value, repeat:document.getElementById('nt-repeat').value, category:document.getElementById('nt-category').value||null, reminderDays: reminderVal===''?null:Number(reminderVal), status:'Not Started', done:false, author:state.currentUser.name, createdAt:todayISO() };
-    await storeSet('task:'+t.id, t); state.tasks.push(t); state.showNewTask=false; flashToast('Task added'); render();
+    const result = await storeSet('task:'+t.id, t);
+    if(!result){ flashToast("Couldn't save that task — please try again."); return; }
+    state.tasks.push(t); state.showNewTask=false; flashToast('Task added'); render();
   });
 
   app.querySelectorAll('[data-toggle-task]').forEach(el=>el.addEventListener('click', async (e)=>{
     e.stopPropagation(); const id=el.getAttribute('data-toggle-task'); const t=state.tasks.find(x=>x.id===id); if(!t) return;
     const wasNotDone = !t.done;
-    t.done=!t.done; t.status = t.done ? 'Completed' : 'Not Started'; await storeSet('task:'+t.id, t);
+    const previousStatus = t.status;
+    t.done=!t.done; t.status = t.done ? 'Completed' : 'Not Started';
+    const result = await storeSet('task:'+t.id, t);
+    if(!result){ t.done=!t.done; t.status=previousStatus; flashToast("Couldn't update that task."); render(); return; }
     if(t.done && wasNotDone && t.repeat && t.repeat!=='none'){ await createRepeatFollowUp(t); }
     render();
   }));
@@ -2438,7 +2462,9 @@ function bindEvents(){
     if(!text) return;
     const type = document.getElementById('new-note-type').value;
     const n = { id:uid('note'), contactId:addNoteBtn.getAttribute('data-contact'), text, type, author:state.currentUser.name, createdAt:todayISO() };
-    await storeSet('note:'+n.id, n); state.notes.unshift(n); render();
+    const result = await storeSet('note:'+n.id, n);
+    if(!result){ flashToast("Couldn't save that note — please try again."); return; }
+    state.notes.unshift(n); render();
   });
 
   const addDocBtn = app.querySelector('[data-action="add-doc"]');
@@ -2447,7 +2473,9 @@ function bindEvents(){
     const url = document.getElementById('new-doc-url').value.trim();
     if(!name || !url){ flashToast('Name and link are both required'); return; }
     const d = { id:uid('doc'), contactId:addDocBtn.getAttribute('data-contact'), name, url, addedBy:state.currentUser.name, createdAt:todayISO() };
-    await storeSet('doc:'+d.id, d); state.documents.push(d); flashToast('Document linked'); render();
+    const result = await storeSet('doc:'+d.id, d);
+    if(!result){ flashToast("Couldn't link that document — please try again."); return; }
+    state.documents.push(d); flashToast('Document linked'); render();
   });
 
   const delContact = app.querySelector('[data-action="delete-contact"]');
@@ -2462,7 +2490,9 @@ function bindEvents(){
   if(saveAddrBtn) saveAddrBtn.addEventListener('click', async ()=>{
     const id = saveAddrBtn.getAttribute('data-contact'); const c = state.contacts.find(x=>x.id===id); if(!c) return;
     c.address = { street:document.getElementById('addr-street').value.trim(), city:document.getElementById('addr-city').value.trim(), state:document.getElementById('addr-state').value.trim(), zip:document.getElementById('addr-zip').value.trim(), country:document.getElementById('addr-country').value.trim() };
-    await storeSet('contact:'+c.id, c); state.editingAddressContactId=null; flashToast('Address saved'); render();
+    const result = await storeSet('contact:'+c.id, c);
+    if(!result){ flashToast("Couldn't save that address — please try again."); return; }
+    state.editingAddressContactId=null; flashToast('Address saved'); render();
   });
 
   const saveStage = app.querySelector('[data-action="save-opp-stage"]');
@@ -2473,7 +2503,9 @@ function bindEvents(){
     const newStage = sel.value; const changed = o.stage !== newStage;
     o.stage = newStage;
     if(changed){ o.stageHistory = o.stageHistory || []; o.stageHistory.push({stage:newStage, at:nowISO()}); }
-    await storeSet('opp:'+o.id, o); state.openOppId=null;
+    const result = await storeSet('opp:'+o.id, o);
+    if(!result){ flashToast("Couldn't save that change."); return; }
+    state.openOppId=null;
     if(changed) await runAutomationRules('opp','stage',newStage,{contactId:o.contactId, oppId:o.id});
     flashToast('Saved'); render();
   });
@@ -2510,7 +2542,9 @@ function bindEvents(){
     const name = document.getElementById('nl-name').value.trim();
     if(!name){ flashToast('Name is required'); return; }
     const l = { id:uid('lead'), name, company:document.getElementById('nl-company').value.trim(), email:document.getElementById('nl-email').value.trim(), phone:document.getElementById('nl-phone').value.trim(), source:document.getElementById('nl-source').value.trim(), campaignId:document.getElementById('nl-campaign').value||null, notes:document.getElementById('nl-notes').value.trim(), status:'new', createdAt:todayISO() };
-    await storeSet('lead:'+l.id, l); state.leads.unshift(l); state.showNewLead=false; flashToast('Lead added'); render();
+    const result = await storeSet('lead:'+l.id, l);
+    if(!result){ flashToast("Couldn't save that lead — please try again."); return; }
+    state.leads.unshift(l); state.showNewLead=false; flashToast('Lead added'); render();
   });
   app.querySelectorAll('[data-action="open-convert-lead"]').forEach(b=>b.addEventListener('click',()=>{ state.convertLeadId=b.getAttribute('data-lead'); render(); }));
   const ccv = app.querySelector('[data-action="close-convert-lead"]'); if(ccv) ccv.addEventListener('click',()=>{ state.convertLeadId=null; render(); });
@@ -2519,14 +2553,19 @@ function bindEvents(){
     const leadId = scv.getAttribute('data-lead'); const l = state.leads.find(x=>x.id===leadId); if(!l) return;
     const contactType = document.getElementById('cv-type').value;
     const c = { id:uid('contact'), type:contactType, name:l.name, company:l.company||'', email:l.email||'', phone:l.phone||'', tags:l.source?[l.source]:[], createdAt:todayISO() };
-    await storeSet('contact:'+c.id, c); state.contacts.push(c); state.contacts.sort((a,b)=>a.name.localeCompare(b.name));
+    const contactResult = await storeSet('contact:'+c.id, c);
+    if(!contactResult){ flashToast("Couldn't create the contact — conversion stopped."); return; }
+    state.contacts.push(c); state.contacts.sort((a,b)=>a.name.localeCompare(b.name));
     const makeOpp = document.getElementById('cv-makeopp').checked;
     if(makeOpp){
       const o = { id:uid('opp'), title:document.getElementById('cv-opp-title').value.trim()||l.name, contactId:c.id, value:Number(document.getElementById('cv-opp-value').value)||0, expectedClose:document.getElementById('cv-opp-close').value, stage:'new', source:l.source||'', campaignId:l.campaignId||null, createdAt:nowISO(), stageHistory:[{stage:'new', at:nowISO()}] };
-      await storeSet('opp:'+o.id, o); state.opps.push(o);
+      const oppResult = await storeSet('opp:'+o.id, o);
+      if(oppResult) state.opps.push(o);
+      else flashToast('Contact created, but the opportunity failed to save.');
     }
     l.status='converted'; l.convertedContactId=c.id;
-    await storeSet('lead:'+l.id, l);
+    const leadResult = await storeSet('lead:'+l.id, l);
+    if(!leadResult) flashToast("Contact created, but couldn't mark the lead as converted.");
     await runAutomationRules('lead','status','converted',{contactId:c.id, leadId:l.id});
     state.convertLeadId=null; flashToast('Lead converted to contact'+(makeOpp?' & opportunity':'')); render();
   });
@@ -2548,7 +2587,9 @@ function bindEvents(){
     const name = document.getElementById('np-name').value.trim();
     if(!name){ flashToast('Name is required'); return; }
     const p = { id:uid('product'), name, sku:document.getElementById('np-sku').value.trim(), price:Number(document.getElementById('np-price').value)||0, description:document.getElementById('np-desc').value.trim(), createdAt:todayISO() };
-    await storeSet('product:'+p.id, p); state.products.push(p); state.products.sort((a,b)=>a.name.localeCompare(b.name)); state.showNewProduct=false; flashToast('Product added'); render();
+    const result = await storeSet('product:'+p.id, p);
+    if(!result){ flashToast("Couldn't save that product — please try again."); return; }
+    state.products.push(p); state.products.sort((a,b)=>a.name.localeCompare(b.name)); state.showNewProduct=false; flashToast('Product added'); render();
   });
   app.querySelectorAll('[data-action="delete-product"]').forEach(b=>b.addEventListener('click', async ()=>{
     const id = b.getAttribute('data-product'); await storeDelete('product:'+id); state.products = state.products.filter(p=>p.id!==id); flashToast('Product deleted'); render();
@@ -2562,7 +2603,9 @@ function bindEvents(){
     const name = document.getElementById('ncp-name').value.trim();
     if(!name){ flashToast('Name is required'); return; }
     const c = { id:uid('campaign'), name, channel:document.getElementById('ncp-channel').value, cost:Number(document.getElementById('ncp-cost').value)||0, status:document.getElementById('ncp-status').value, startDate:document.getElementById('ncp-start').value, endDate:document.getElementById('ncp-end').value, createdAt:todayISO() };
-    await storeSet('campaign:'+c.id, c); state.campaigns.unshift(c); state.showNewCampaign=false; flashToast('Campaign added'); render();
+    const result = await storeSet('campaign:'+c.id, c);
+    if(!result){ flashToast("Couldn't save that campaign — please try again."); return; }
+    state.campaigns.unshift(c); state.showNewCampaign=false; flashToast('Campaign added'); render();
   });
   app.querySelectorAll('[data-action="delete-campaign"]').forEach(b=>b.addEventListener('click', async ()=>{
     const id = b.getAttribute('data-campaign'); await storeDelete('campaign:'+id); state.campaigns = state.campaigns.filter(c=>c.id!==id); flashToast('Campaign deleted'); render();
@@ -2580,7 +2623,9 @@ function bindEvents(){
     const w = { id:uid('widget'), type, metric, title, position: state.widgets.length, createdAt:todayISO() };
     if(type==='comparator'){ const mb = document.getElementById('aw-metricB'); w.metricB = mb ? mb.value : ''; }
     if(type==='target'){ const t = document.getElementById('aw-target'); w.target = t ? Number(t.value)||0 : 0; }
-    await storeSet('widget:'+w.id, w); state.widgets.push(w); state.showAddWidget=false; flashToast('Widget added'); render();
+    const result = await storeSet('widget:'+w.id, w);
+    if(!result){ flashToast("Couldn't save that widget — please try again."); return; }
+    state.widgets.push(w); state.showAddWidget=false; flashToast('Widget added'); render();
   });
   app.querySelectorAll('[data-action="remove-widget"]').forEach(b=>b.addEventListener('click', async ()=>{
     const id = b.getAttribute('data-widget'); await storeDelete('widget:'+id); state.widgets = state.widgets.filter(w=>w.id!==id); render();
@@ -2658,7 +2703,9 @@ function bindEvents(){
     const triggerId = document.getElementById('nr-trigger').value;
     const trig = RULE_TRIGGERS.find(t=>t.id===triggerId);
     const r = { id:uid('rule'), name, triggerId, module:trig.module, field:trig.field, value:document.getElementById('nr-value').value, taskTitle, dueInDays:Number(document.getElementById('nr-due').value)||1, ownerId:state.currentUser.id, nextRuleId:(document.getElementById('nr-next')?document.getElementById('nr-next').value:'')||null, createdAt:todayISO() };
-    await storeSet('rule:'+r.id, r); state.rules.push(r); state.showNewRule=false; flashToast('Rule created'); render();
+    const result = await storeSet('rule:'+r.id, r);
+    if(!result){ flashToast("Couldn't save that rule — please try again."); return; }
+    state.rules.push(r); state.showNewRule=false; flashToast('Rule created'); render();
   });
   app.querySelectorAll('[data-action="delete-rule"]').forEach(b=>b.addEventListener('click', async ()=>{
     const id = b.getAttribute('data-rule'); await storeDelete('rule:'+id); state.rules = state.rules.filter(r=>r.id!==id); flashToast('Rule deleted'); render();
