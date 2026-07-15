@@ -365,6 +365,7 @@ button:focus-visible,.chip:focus-visible,.nav-item:focus-visible,th:focus-visibl
 <div id="app"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script>
 (function(){
 const SUPABASE_URL = 'https://troprhakzczptxnqwtoa.supabase.co';
@@ -383,6 +384,55 @@ const PREFIX_TABLE = {
   'widget:':'widgets', 'rule:':'automation_rules', 'taskComment:':'task_comments', 'user:':'profiles',
   'picklist:':'picklists'
 };
+
+/* ============ REALTIME SYNC ============
+   Without this, data is shared and saved, but each person only sees
+   other people's changes when THEY reload. This subscribes to live
+   database changes so everyone's screen updates automatically. */
+const TABLE_STATE_KEY = {
+  contacts:'contacts', leads:'leads', opportunities:'opps', tasks:'tasks', notes:'notes',
+  task_comments:'taskComments', campaigns:'campaigns', products:'products', documents:'documents',
+  widgets:'widgets', automation_rules:'rules', picklists:'picklists', profiles:'users'
+};
+let realtimeChannel = null;
+function realtimeRowFix(table, row){
+  if(table==='automation_rules'){
+    const trig = RULE_TRIGGERS.find(t=>t.module===row.module && t.field===row.field);
+    row.triggerId = trig ? trig.id : null;
+  }
+  return row;
+}
+function handleRealtimeChange(table, payload){
+  const stateKey = TABLE_STATE_KEY[table];
+  if(!stateKey || !state[stateKey]) return;
+  if(payload.eventType === 'INSERT' || payload.eventType === 'UPDATE'){
+    const row = realtimeRowFix(table, rowToCamel(payload.new));
+    const arr = state[stateKey];
+    const idx = arr.findIndex(x=>x.id===row.id);
+    if(idx>=0) arr[idx] = row; else arr.push(row);
+    render();
+  } else if(payload.eventType === 'DELETE'){
+    const oldId = payload.old && payload.old.id;
+    if(oldId){ state[stateKey] = state[stateKey].filter(x=>x.id!==oldId); render(); }
+  }
+}
+function setupRealtime(){
+  if(realtimeChannel) return; // already subscribed this session
+  realtimeChannel = sb.channel('amara-crm-sync');
+  Object.keys(TABLE_STATE_KEY).forEach(table=>{
+    realtimeChannel.on('postgres_changes', { event:'*', schema:'public', table }, payload=>handleRealtimeChange(table, payload));
+  });
+  realtimeChannel.on('postgres_changes', { event:'*', schema:'public', table:'company_settings' }, payload=>{
+    if(payload.new){ state.company = rowToCamel(payload.new); render(); }
+  });
+  realtimeChannel.on('postgres_changes', { event:'*', schema:'public', table:'home_layout' }, payload=>{
+    if(payload.new && payload.new.sections){ state.homeLayout = payload.new.sections; render(); }
+  });
+  realtimeChannel.subscribe();
+}
+function teardownRealtime(){
+  if(realtimeChannel){ sb.removeChannel(realtimeChannel); realtimeChannel = null; }
+}
 function camelToSnake(s){ return s.replace(/([A-Z])/g,'_$1').toLowerCase(); }
 function snakeToCamel(s){ return s.replace(/_([a-z0-9])/g,(_,c)=>c.toUpperCase()); }
 function rowToCamel(row){
@@ -495,10 +545,23 @@ function nowISO(){ return new Date().toISOString(); }
 function fmtDateTime(iso){
   if(!iso) return '—';
   const d = new Date(iso);
+  if(isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}) + ' · ' + d.toLocaleTimeString('en-US',{hour:'numeric',minute:'2-digit'});
 }
-function addDays(iso,n){ const d=new Date(iso+'T00:00:00'); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
-function fmtDate(iso){ if(!iso) return '—'; const d=new Date(iso+'T00:00:00'); return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'}); }
+function addDays(iso,n){
+  const datePart = String(iso||'').slice(0,10); // tolerate a full timestamp being passed by mistake
+  const d = new Date(datePart+'T00:00:00');
+  if(isNaN(d.getTime())) return todayISO();
+  d.setDate(d.getDate()+n);
+  return d.toISOString().slice(0,10);
+}
+function fmtDate(iso){
+  if(!iso) return '—';
+  const datePart = String(iso).slice(0,10); // tolerate a full timestamp being passed by mistake
+  const d = new Date(datePart+'T00:00:00');
+  if(isNaN(d.getTime())) return '—';
+  return d.toLocaleDateString('en-US',{month:'short',day:'numeric',year:'numeric'});
+}
 function fmtMoney(n){ n=Number(n)||0; return '$'+n.toLocaleString('en-US',{maximumFractionDigits:0}); }
 function escapeHtml(s){ return String(s==null?'':s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c])); }
 function initials(name){ return (name||'?').split(' ').map(w=>w[0]).filter(Boolean).slice(0,2).join('').toUpperCase(); }
@@ -572,7 +635,8 @@ const ICONS = {
   analytics:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="12" width="4" height="8" rx="1"/><rect x="10" y="7" width="4" height="13" rx="1"/><rect x="17" y="3" width="4" height="17" rx="1"/></svg>',
   link:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M9 15l6-6"/><path d="M11 6l1-1a3.5 3.5 0 015 5l-1 1"/><path d="M13 18l-1 1a3.5 3.5 0 01-5-5l1-1"/></svg>',
   rules:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="7" cy="7" r="2.5"/><circle cx="17" cy="17" r="2.5"/><path d="M9.5 8l6 8"/><path d="M4 17h3M17 7h3"/></svg>',
-  edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>'
+  edit:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20h9"/><path d="M16.5 3.5a2.1 2.1 0 013 3L7 19l-4 1 1-4z"/></svg>',
+  upload:'<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M12 20V7"/><path d="M7 12l5-5 5 5"/><path d="M4 20h16"/></svg>'
 };
 
 /* ============ state ============ */
@@ -586,7 +650,8 @@ let state = {
   aiQuickText:null, aiInsightText:null, aiLoading:false,
   setupStage:null, // 'auth' | 'no-profile' | null
   notifOpen:false, onboardDismissed:false, visitedReports:false, sidebarOpen:false,
-  showNewLead:false, convertLeadId:null, showNewProduct:false, showNewCampaign:false,
+  showNewLead:false, convertLeadId:null, editLeadId:null, showNewProduct:false, showNewCampaign:false,
+  showImportContacts:false, importSummary:'', importError:'', importLoading:false,
   showAddWidget:false, newWidgetType:'kpi',
   showNewRule:false, editingAddressContactId:null, lineItemDraft:{productId:'', qty:1},
   taskView:'list', taskCardFields:{owner:true, contact:true, priority:true, due:true}, showCardFields:false,
@@ -657,6 +722,7 @@ async function loadAll(){
       state.setupStage = 'no-profile';
     } else {
       state.setupStage = null;
+      setupRealtime();
     }
   }catch(e){
     // Important: we ARE signed in at this point (session exists above) — a failure here
@@ -681,6 +747,7 @@ function renderLocalSearch(key, value, placeholder){
 }
 
 function contactById(id){ return state.contacts.find(c=>c.id===id); }
+function leadById(id){ return state.leads.find(l=>l.id===id); }
 function notesForContact(id){ return state.notes.filter(n=>n.contactId===id); }
 function oppsForContact(id){ return state.opps.filter(o=>o.contactId===id); }
 function stageInfo(id){ return STAGES.find(s=>s.id===id)||STAGES[0]; }
@@ -690,7 +757,9 @@ function canDelete(){ return state.currentUser && (state.currentUser.role==='Sup
 function dueClass(dueDate,done){
   if(done) return 'due-done';
   if(!dueDate) return 'due-later';
-  const days=(new Date(dueDate)-new Date(todayISO()))/86400000;
+  const d1 = new Date(String(dueDate).slice(0,10)+'T00:00:00');
+  if(isNaN(d1.getTime())) return 'due-later';
+  const days=(d1-new Date(todayISO()+'T00:00:00'))/86400000;
   if(days<0) return 'due-overdue';
   if(days<=3) return 'due-soon';
   return 'due-later';
@@ -698,7 +767,9 @@ function dueClass(dueDate,done){
 function dueLabel(dueDate,done){
   if(done) return 'Done';
   if(!dueDate) return 'No date';
-  const days=Math.round((new Date(dueDate)-new Date(todayISO()))/86400000);
+  const d1 = new Date(String(dueDate).slice(0,10)+'T00:00:00');
+  if(isNaN(d1.getTime())) return 'No date';
+  const days=Math.round((d1-new Date(todayISO()+'T00:00:00'))/86400000);
   if(days<0) return Math.abs(days)+'d overdue';
   if(days===0) return 'Due today';
   return 'Due in '+days+'d';
@@ -985,6 +1056,8 @@ function renderInner(){
     ${''}
     ${state.showNewLead ? renderNewLeadModal() : ''}
     ${state.convertLeadId ? renderConvertLeadModal() : ''}
+    ${state.editLeadId ? renderEditLeadModal() : ''}
+    ${state.showImportContacts ? renderImportContactsModal() : ''}
     ${state.showNewProduct ? renderNewProductModal() : ''}
     ${state.showNewCampaign ? renderNewCampaignModal() : ''}
     ${state.showAddWidget ? renderAddWidgetModal() : ''}
@@ -1386,7 +1459,7 @@ function renderContacts(){
   return `
     <div class="page-head">
       <div><div class="eyebrow">Address book</div><h1>Contacts</h1><div class="page-sub">Individuals, companies, referrers & partners — one place for the whole team</div></div>
-      <div class="head-actions"><button class="btn ghost" data-action="export-contacts">${ICONS.download} Export CSV</button><button class="btn ochre" data-action="new-contact">${ICONS.plus} New contact</button></div>
+      <div class="head-actions"><button class="btn ghost" data-action="export-contacts">${ICONS.download} Export CSV</button><button class="btn ghost" data-action="open-import-contacts">${ICONS.upload} Import CSV</button><button class="btn ochre" data-action="new-contact">${ICONS.plus} New contact</button></div>
     </div>
     ${motif()}
     ${renderLocalSearch('contactSearch', state.contactSearch, 'Search contacts by name, company, email, phone…')}
@@ -1522,9 +1595,10 @@ function renderLeads(){
             <td style="color:var(--ink-muted);font-size:11.5px;">${escapeHtml(l.email||'—')}</td>
             <td style="color:var(--ink-muted);font-size:11.5px;">${escapeHtml(l.phone||'—')}</td>
             <td style="color:var(--ink-muted)">${escapeHtml(l.source||'—')}</td>
-            <td><span class="pill ${(LEAD_STATUSES.find(x=>x.id===l.status)||LEAD_STATUSES[0]).pill}">${(LEAD_STATUSES.find(x=>x.id===l.status)||LEAD_STATUSES[0]).label}</span></td>
+            <td><span class="pill ${(LEAD_STATUSES.find(x=>x.id===l.status)||LEAD_STATUSES[0]).pill}">${(LEAD_STATUSES.find(x=>x.id===l.status)||LEAD_STATUSES[0]).label}</span>${l.status==='converted'&&l.convertedContactId?` <a href="#" data-open-contact="${l.convertedContactId}" style="font-size:10.5px;color:var(--accent-ochre);font-weight:600;">View contact →</a>`:''}</td>
             <td style="color:var(--ink-faint);font-size:11px;">${fmtDate(l.createdAt)}</td>
             <td style="white-space:nowrap;">
+              <button class="btn ghost sm" data-action="open-edit-lead" data-lead="${l.id}">${ICONS.edit} Edit</button>
               ${(l.status!=='converted'&&l.status!=='disqualified') ? `
                 <button class="btn ochre sm" data-action="open-convert-lead" data-lead="${l.id}">Convert</button>
                 <button class="btn ghost sm" data-action="disqualify-lead" data-lead="${l.id}">Disqualify</button>` : ''}
@@ -1549,6 +1623,43 @@ function renderNewLeadModal(){
         <div class="field"><label>Notes</label><textarea id="nl-notes" rows="2" placeholder="Anything worth remembering"></textarea></div>
       </div>
       <div class="modal-foot"><button class="btn ochre" data-action="save-new-lead">Save lead</button></div>
+    </div>
+  </div>`;
+}
+
+function renderEditLeadModal(){
+  const l = state.leads.find(x=>x.id===state.editLeadId);
+  if(!l) return '';
+  return `
+  <div class="modal-overlay" data-close-overlay="edit-lead">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-head"><h2>Edit lead</h2><button class="modal-close" data-action="close-edit-lead">✕</button></div>
+      <div class="modal-body">
+        <div class="field"><label>Name *</label><input id="el-name" type="text" value="${escapeHtml(l.name)}"></div>
+        <div class="field"><label>Company / organisation</label><input id="el-company" type="text" value="${escapeHtml(l.company||'')}"></div>
+        <div class="field-row"><div class="field"><label>Email</label><input id="el-email" type="email" value="${escapeHtml(l.email||'')}"></div><div class="field"><label>Phone</label><input id="el-phone" type="text" value="${escapeHtml(l.phone||'')}"></div></div>
+        <div class="field"><label>Source</label><input id="el-source" type="text" value="${escapeHtml(l.source||'')}"></div>
+        <div class="field"><label>Campaign (optional)</label><select id="el-campaign"><option value="">None</option>${state.campaigns.map(c=>`<option value="${c.id}" ${c.id===l.campaignId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Status</label><select id="el-status">${LEAD_STATUSES.map(s=>`<option value="${s.id}" ${s.id===l.status?'selected':''}>${s.label}</option>`).join('')}</select></div>
+        <div class="field"><label>Notes</label><textarea id="el-notes" rows="2">${escapeHtml(l.notes||'')}</textarea></div>
+      </div>
+      <div class="modal-foot"><button class="btn primary" data-action="save-edit-lead" data-lead="${l.id}">Save changes</button></div>
+    </div>
+  </div>`;
+}
+
+function renderImportContactsModal(){
+  return `
+  <div class="modal-overlay" data-close-overlay="import-contacts">
+    <div class="modal" onclick="event.stopPropagation()">
+      <div class="modal-head"><h2>Import contacts from CSV</h2><button class="modal-close" data-action="close-import-contacts">✕</button></div>
+      <div class="modal-body">
+        <div class="page-sub" style="margin-bottom:12px;">Your file needs a header row. Recognised columns (any order, case doesn't matter): <strong>name</strong> (required), type, company, email, phone, tags. "tags" can hold multiple values separated by semicolons. Rows without a name are skipped.</div>
+        <div class="field"><label>CSV file</label><input id="import-csv-file" type="file" accept=".csv,text/csv"></div>
+        ${state.importSummary ? `<div class="page-sub" style="background:rgba(90,122,85,0.1);padding:10px 12px;border-radius:8px;margin-top:8px;">${escapeHtml(state.importSummary)}</div>` : ''}
+        ${state.importError ? `<div style="color:var(--sos-red);font-size:11.5px;margin-top:8px;">${escapeHtml(state.importError)}</div>` : ''}
+      </div>
+      <div class="modal-foot"><button class="btn ochre" data-action="run-import-contacts" ${state.importLoading?'disabled':''}>${state.importLoading?'<span class="spinner"></span> Importing…':'Import'}</button></div>
     </div>
   </div>`;
 }
@@ -2248,6 +2359,7 @@ function renderNewTaskModal(){
           </div>
         </div>
         <div class="field"><label>Related contact</label><select id="nt-contact"><option value="">None</option>${state.contacts.map(c=>`<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('')}</select></div>
+        <div class="field"><label>Related lead</label><select id="nt-lead"><option value="">None</option>${state.leads.map(l=>`<option value="${l.id}">${escapeHtml(l.name)}${l.company?' — '+escapeHtml(l.company):''}</option>`).join('')}</select></div>
         <div class="field"><label>Owner</label><select id="nt-owner">${state.users.map(u=>`<option value="${u.id}" ${u.id===state.currentUser.id?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div>
         <div class="field">
           <label>Also notify these team members</label>
@@ -2292,6 +2404,7 @@ function renderTaskDetailModal(){
   const comments = state.taskComments.filter(cm=>cm.taskId===t.id).sort((a,b)=>(a.createdAt||'').localeCompare(b.createdAt||''));
   const editing = !!state.taskEditMode;
   const c = contactById(t.contactId);
+  const lead = leadById(t.leadId);
   const owner = t.ownerId ? state.users.find(u=>u.id===t.ownerId) : null;
   const assignees = (t.assigneeIds||[]).map(id=>state.users.find(u=>u.id===id)).filter(Boolean);
 
@@ -2300,6 +2413,7 @@ function renderTaskDetailModal(){
           <div class="field"><label>Contact</label><div>${c?escapeHtml(c.name):'—'}</div></div>
           <div class="field"><label>Owner</label><div>${owner?escapeHtml(owner.name):'—'}</div></div>
         </div>
+        <div class="field"><label>Related lead</label><div>${lead?escapeHtml(lead.name)+(lead.company?' — '+escapeHtml(lead.company):''):'—'}</div></div>
         <div class="field"><label>Also notified</label><div>${assignees.length?assignees.map(a=>escapeHtml(a.name)).join(', '):'No one else'}</div></div>
         <div class="field-row">
           <div class="field"><label>Due date</label><div>${fmtDate(t.dueDate)}</div></div>
@@ -2325,6 +2439,7 @@ function renderTaskDetailModal(){
           <div class="field"><label>Contact</label><select id="td-contact"><option value="">None</option>${state.contacts.map(c=>`<option value="${c.id}" ${c.id===t.contactId?'selected':''}>${escapeHtml(c.name)}</option>`).join('')}</select></div>
           <div class="field"><label>Owner</label><select id="td-owner">${state.users.map(u=>`<option value="${u.id}" ${u.id===t.ownerId?'selected':''}>${escapeHtml(u.name)}</option>`).join('')}</select></div>
         </div>
+        <div class="field"><label>Related lead</label><select id="td-lead"><option value="">None</option>${state.leads.map(l=>`<option value="${l.id}" ${l.id===t.leadId?'selected':''}>${escapeHtml(l.name)}${l.company?' — '+escapeHtml(l.company):''}</option>`).join('')}</select></div>
         <div class="field">
           <label>Also notify these team members</label>
           <div style="display:flex;gap:10px;flex-wrap:wrap;">
@@ -2515,6 +2630,7 @@ function bindEvents(){
     const status = document.getElementById('td-status').value;
     t.title = title;
     t.contactId = document.getElementById('td-contact').value || null;
+    t.leadId = document.getElementById('td-lead').value || null;
     t.ownerId = document.getElementById('td-owner').value || null;
     t.assigneeIds = [...document.querySelectorAll('[data-td-assignee]:checked')].map(el=>el.getAttribute('data-td-assignee'));
     t.dueDate = document.getElementById('td-due').value;
@@ -2550,6 +2666,8 @@ function bindEvents(){
     if(which==='new-task') state.showNewTask=false;
     if(which==='new-lead') state.showNewLead=false;
     if(which==='convert-lead') state.convertLeadId=null;
+    if(which==='edit-lead') state.editLeadId=null;
+    if(which==='import-contacts') state.showImportContacts=false;
     if(which==='new-product') state.showNewProduct=false;
     if(which==='new-campaign') state.showNewCampaign=false;
     if(which==='add-widget') state.showAddWidget=false;
@@ -2605,7 +2723,7 @@ function bindEvents(){
     if(!title){ flashToast('Task title is required'); return; }
     const reminderVal = document.getElementById('nt-reminder').value;
     const assigneeIds = [...document.querySelectorAll('[data-nt-assignee]:checked')].map(el=>el.getAttribute('data-nt-assignee'));
-    const t = { id:uid('task'), title, contactId:document.getElementById('nt-contact').value||null, oppId:null, ownerId:document.getElementById('nt-owner').value||state.currentUser.id, assigneeIds, dueDate:document.getElementById('nt-due').value, priority:document.getElementById('nt-priority').value, repeat:document.getElementById('nt-repeat').value, category:document.getElementById('nt-category').value||null, reminderDays: reminderVal===''?null:Number(reminderVal), status:'Not Started', done:false, author:state.currentUser.name, createdAt:todayISO() };
+    const t = { id:uid('task'), title, contactId:document.getElementById('nt-contact').value||null, oppId:null, leadId:document.getElementById('nt-lead').value||null, ownerId:document.getElementById('nt-owner').value||state.currentUser.id, assigneeIds, dueDate:document.getElementById('nt-due').value, priority:document.getElementById('nt-priority').value, repeat:document.getElementById('nt-repeat').value, category:document.getElementById('nt-category').value||null, reminderDays: reminderVal===''?null:Number(reminderVal), status:'Not Started', done:false, author:state.currentUser.name, createdAt:todayISO() };
     const result = await storeSet('task:'+t.id, t);
     if(!result){ flashToast("Couldn't save that task — please try again."); return; }
     state.tasks.push(t); state.showNewTask=false; flashToast('Task added'); render();
@@ -2713,6 +2831,25 @@ function bindEvents(){
     state.leads.unshift(l); state.showNewLead=false; flashToast('Lead added'); render();
   });
   app.querySelectorAll('[data-action="open-convert-lead"]').forEach(b=>b.addEventListener('click',()=>{ state.convertLeadId=b.getAttribute('data-lead'); render(); }));
+  app.querySelectorAll('[data-action="open-edit-lead"]').forEach(b=>b.addEventListener('click',()=>{ state.editLeadId=b.getAttribute('data-lead'); render(); }));
+  const closeEditLead = app.querySelector('[data-action="close-edit-lead"]'); if(closeEditLead) closeEditLead.addEventListener('click',()=>{ state.editLeadId=null; render(); });
+  const saveEditLead = app.querySelector('[data-action="save-edit-lead"]');
+  if(saveEditLead) saveEditLead.addEventListener('click', async ()=>{
+    const id = saveEditLead.getAttribute('data-lead'); const l = state.leads.find(x=>x.id===id); if(!l) return;
+    const name = document.getElementById('el-name').value.trim();
+    if(!name){ flashToast('Name is required'); return; }
+    l.name = name;
+    l.company = document.getElementById('el-company').value.trim();
+    l.email = document.getElementById('el-email').value.trim();
+    l.phone = document.getElementById('el-phone').value.trim();
+    l.source = document.getElementById('el-source').value.trim();
+    l.campaignId = document.getElementById('el-campaign').value || null;
+    l.status = document.getElementById('el-status').value;
+    l.notes = document.getElementById('el-notes').value.trim();
+    const result = await storeSet('lead:'+l.id, l);
+    if(!result){ flashToast("Couldn't save that lead."); return; }
+    state.editLeadId = null; flashToast('Lead updated'); render();
+  });
   const ccv = app.querySelector('[data-action="close-convert-lead"]'); if(ccv) ccv.addEventListener('click',()=>{ state.convertLeadId=null; render(); });
   const scv = app.querySelector('[data-action="save-convert-lead"]');
   if(scv) scv.addEventListener('click', async ()=>{
@@ -2906,6 +3043,7 @@ function bindEvents(){
 
   // sign out
   app.querySelectorAll('[data-action="switch-user"]').forEach(el=>el.addEventListener('click', async ()=>{
+    teardownRealtime();
     await sb.auth.signOut();
     state.currentUser = null; state.authMode='signin'; state.setupStage='auth'; render();
   }));
@@ -3014,6 +3152,60 @@ function bindEvents(){
   const exC = app.querySelector('[data-action="export-contacts"]'); if(exC) exC.addEventListener('click',()=>{
     const csv = toCsv(state.contacts, [{label:'Name',key:'name'},{label:'Type',key:'type'},{label:'Company',key:'company'},{label:'Email',key:'email'},{label:'Phone',key:'phone'},{label:'Tags',get:r=>(r.tags||[]).join('; ')}]);
     downloadCsv('amara-contacts.csv', csv);
+  });
+  const openImportContacts = app.querySelector('[data-action="open-import-contacts"]');
+  if(openImportContacts) openImportContacts.addEventListener('click',()=>{ state.showImportContacts=true; state.importSummary=''; state.importError=''; render(); });
+  const closeImportContacts = app.querySelector('[data-action="close-import-contacts"]');
+  if(closeImportContacts) closeImportContacts.addEventListener('click',()=>{ state.showImportContacts=false; render(); });
+  const runImportContacts = app.querySelector('[data-action="run-import-contacts"]');
+  if(runImportContacts) runImportContacts.addEventListener('click', ()=>{
+    const fileInput = document.getElementById('import-csv-file');
+    const file = fileInput && fileInput.files && fileInput.files[0];
+    if(!file){ state.importError = 'Choose a CSV file first.'; state.importSummary=''; render(); return; }
+    state.importError=''; state.importSummary=''; state.importLoading=true; render();
+    Papa.parse(file, {
+      header: true, skipEmptyLines: true,
+      complete: async (results) => {
+        try{
+          const rows = results.data || [];
+          const getField = (row, ...names) => {
+            for(const key in row){ if(names.includes(key.trim().toLowerCase())) return (row[key]||'').trim(); }
+            return '';
+          };
+          let imported = 0, skipped = 0;
+          for(const row of rows){
+            const name = getField(row, 'name');
+            if(!name){ skipped++; continue; }
+            let type = getField(row, 'type');
+            if(!CONTACT_TYPES.includes(type)) type = 'Individual';
+            const tagsRaw = getField(row, 'tags');
+            const c = {
+              id: uid('contact'), type, name,
+              company: getField(row, 'company'),
+              email: getField(row, 'email'),
+              phone: getField(row, 'phone'),
+              tags: tagsRaw ? tagsRaw.split(';').map(s=>s.trim()).filter(Boolean) : [],
+              createdAt: todayISO()
+            };
+            const result = await storeSet('contact:'+c.id, c);
+            if(result){ state.contacts.push(c); imported++; } else { skipped++; }
+          }
+          state.contacts.sort((a,b)=>a.name.localeCompare(b.name));
+          state.importLoading = false;
+          state.importSummary = `Imported ${imported} contact${imported===1?'':'s'}${skipped>0?`, skipped ${skipped} row${skipped===1?'':'s'} (missing name or save failed)`:''}.`;
+          render();
+        }catch(e){
+          state.importLoading = false;
+          state.importError = 'Could not process that file: ' + (e.message||e);
+          render();
+        }
+      },
+      error: (err) => {
+        state.importLoading = false;
+        state.importError = 'Could not read that file: ' + (err.message||err);
+        render();
+      }
+    });
   });
   const exO = app.querySelector('[data-action="export-opps"]'); if(exO) exO.addEventListener('click',()=>{
     const csv = toCsv(state.opps, [{label:'Title',key:'title'},{label:'Contact',get:r=>{const c=contactById(r.contactId);return c?c.name:'';}},{label:'Stage',get:r=>stageInfo(r.stage).label},{label:'Value',key:'value'},{label:'Expected close',key:'expectedClose'},{label:'Source',key:'source'}]);
