@@ -368,8 +368,22 @@ button:focus-visible,.chip:focus-visible,.nav-item:focus-visible,th:focus-visibl
 <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
 <script>
 (function(){
-const SUPABASE_URL = 'https://troprhakzczptxnqwtoa.supabase.co';
-const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InRyb3ByaGFremN6cHR4bnF3dG9hIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODQwMTk1OTksImV4cCI6MjA5OTU5NTU5OX0.Ep5Y7UuheW5DWwJG3-KoiEWDUREXN4D21i5_-4Mb2-Y';
+// ----- CONNECT THIS COPY TO YOUR SUPABASE PROJECT -----
+// Replace the two values below (keep the quote marks). Both are on your Supabase project page under
+// Project Settings > API: the "Project URL", and the "anon public" key (or the "publishable" key).
+// These two values are designed to be public; your data is protected by the database's security rules.
+const SUPABASE_URL = 'https://bztjmacbbjiowvwstlvz.supabase.co';
+const SUPABASE_ANON_KEY = 'sb_publishable_tYJHpZElczn9kz5CYZc-cQ_0DPmKK0F';
+// -------------------------------------------------------
+if(/PASTE_YOUR/.test(SUPABASE_URL) || /PASTE_YOUR/.test(SUPABASE_ANON_KEY)){
+  document.getElementById('app').innerHTML = '<div style="font-family:-apple-system,Helvetica,sans-serif;max-width:480px;margin:12vh auto;padding:0 24px;line-height:1.55;color:#1A1A1A"><h2 style="font-weight:600">This copy of the CRM isn\u2019t connected yet</h2><p>Open the file, find the two lines near the top that say <code>PASTE_YOUR\u2026</code>, and replace them with your Supabase Project URL and key.</p></div>';
+  return;
+}
+// Capture password-recovery / link-error info from the URL BEFORE the Supabase client
+// processes (and clears) it, so we know this page load came from an emailed reset link.
+const _urlParams = (window.location.hash || '') + '&' + (window.location.search || '');
+const RECOVERY_FROM_URL = /type=recovery/.test(_urlParams);
+const LINK_ERROR_FROM_URL = !RECOVERY_FROM_URL && /error_code=|error_description=/.test(_urlParams);
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 const SHARED = true;
 const LOGO_URI = 'data:image/png;base64,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';
@@ -446,6 +460,8 @@ function objToSnake(obj){
   const out = {};
   for(const k in obj){ if(obj[k]!==undefined) out[camelToSnake(k)] = obj[k]; }
   if(out.role) out.role = String(out.role).toLowerCase();
+  // An emptied date field arrives as '' but the database wants null for "no date"
+  ['due_date','expected_close','start_date','end_date'].forEach(c=>{ if(out[c]==='') out[c] = null; });
   return out;
 }
 function splitKey(key){
@@ -459,14 +475,16 @@ async function storeSet(key, obj, shared){
   try{
     if(key === 'company:profile'){
       const row = objToSnake(obj);
-      const {error} = await sb.from('company_settings').update(row).eq('id',1);
+      const {data, error} = await sb.from('company_settings').update(row).eq('id',1).select('id');
       if(error) throw error;
+      if(!data || data.length === 0) throw new Error('Not permitted');
       return true;
     }
     if(key === 'meta:onboarding-dismissed') return true; // session-only in the Supabase build, not persisted
     if(key === 'layout:home'){
-      const {error} = await sb.from('home_layout').update({sections: obj.sections}).eq('id',1);
+      const {data, error} = await sb.from('home_layout').update({sections: obj.sections}).eq('id',1).select('id');
       if(error) throw error;
+      if(!data || data.length === 0) throw new Error('Not permitted');
       return true;
     }
     const {table, id} = splitKey(key);
@@ -474,6 +492,14 @@ async function storeSet(key, obj, shared){
     const row = objToSnake(obj);
     row.id = id;
     if(table === 'automation_rules'){ delete row.trigger_id; } // triggerId is UI-only, derived from module+field on read
+    if(table === 'profiles'){
+      // Team profiles are only ever EDITED here (rows are created by the sign-up trigger), so use an update
+      const upd = {...row}; delete upd.id;
+      const {data, error} = await sb.from('profiles').update(upd).eq('id', id).select('id');
+      if(error) throw error;
+      if(!data || data.length === 0) throw new Error('No profile was updated (not permitted?)');
+      return true;
+    }
     const {error} = await sb.from(table).upsert(row);
     if(error) throw error;
     return true;
@@ -503,9 +529,9 @@ async function storeDelete(key, shared){
   try{
     const {table, id} = splitKey(key);
     if(!table) return null;
-    const {error} = await sb.from(table).delete().eq('id',id);
+    const {data, error} = await sb.from(table).delete().eq('id',id).select('id');
     if(error) throw error;
-    return true;
+    return (data && data.length > 0) ? true : null; // 0 rows = nothing deleted (usually not permitted)
   }catch(e){ console.error('delete failed', key, e.message||e); return null; }
 }
 async function storeList(prefix, shared){ return []; } // relational tables don't need key-listing; loadCollection queries directly
@@ -646,9 +672,11 @@ let state = {
   loading:true, users:[], contacts:[], notes:[], opps:[], tasks:[],
   leads:[], products:[], campaigns:[], documents:[], widgets:[], rules:[], taskComments:[],
   currentUser:null, company:{name:'Amara Healthcare', tagline:"Healthcare, done personally"},
-  setupError:'',
+  setupError: LINK_ERROR_FROM_URL ? 'That link has expired or was already used. Enter your email and we\u2019ll send you a fresh one.' : '',
+  authMode: LINK_ERROR_FROM_URL ? 'forgot' : 'signin',
+  authEmail:'', resetCooldownUntil:0, recoveryMode: RECOVERY_FROM_URL,
   aiQuickText:null, aiInsightText:null, aiLoading:false,
-  setupStage:null, // 'auth' | 'no-profile' | null
+  setupStage:null, // 'auth' | 'no-profile' | 'data-error' | 'recovery' | null
   notifOpen:false, onboardDismissed:false, visitedReports:false, sidebarOpen:false,
   showNewLead:false, convertLeadId:null, editLeadId:null, showNewProduct:false, showNewCampaign:false,
   showImportContacts:false, importSummary:'', importError:'', importLoading:false,
@@ -689,6 +717,14 @@ async function loadAll(){
     return;
   }
 
+  // Arrived via an emailed reset link: they must choose a new password before entering the app
+  if(state.recoveryMode){
+    state.setupStage = 'recovery';
+    state.loading = false;
+    render();
+    return;
+  }
+
   try{
     const [users, contacts, notes, opps, tasks, company, homeLayoutRow, leads, products, campaigns, documents, widgets, rules, taskComments, picklists] = await Promise.all([
       loadCollection('user:'), loadCollection('contact:'), loadCollection('note:'),
@@ -720,6 +756,8 @@ async function loadAll(){
     if(!state.currentUser){
       // Signed in with Supabase but no profile row yet (rare: trigger delay, or profile removed by an admin)
       state.setupStage = 'no-profile';
+    } else if(state.recoveryMode){
+      state.setupStage = 'recovery';
     } else {
       state.setupStage = null;
       setupRealtime();
@@ -1108,26 +1146,53 @@ function renderSetupScreen(){
       </div>
     </div>`;
   }
-  // auth (sign in / sign up)
+  // choose a new password (arrived from the emailed reset link)
+  if(state.setupStage === 'recovery'){
+    return `
+    <div class="linen-teal" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;">
+      <div class="modal" style="max-width:440px;">
+        <div class="modal-body" style="padding:28px 26px;">
+          <img src="${LOGO_URI}" alt="" style="width:56px;margin-bottom:14px;">
+          <div class="eyebrow">Almost there</div>
+          <h1 style="font-family:var(--serif);font-weight:400;font-size:24px;margin:0 0 4px;">Choose a new password</h1>
+          <div class="page-sub" style="margin-bottom:20px;">Pick something you haven\u2019t used here before. You\u2019ll be signed in as soon as it\u2019s saved.</div>
+          <div class="field"><label>New password</label><input id="rc-password" type="password" placeholder="At least 6 characters" autocomplete="new-password"></div>
+          <div class="field"><label>Confirm new password</label><input id="rc-confirm" type="password" placeholder="Repeat the new password" autocomplete="new-password"></div>
+          ${state.setupError ? `<div style="color:var(--sos-red);font-size:11.5px;margin-bottom:10px;">${escapeHtml(state.setupError)}</div>` : ''}
+          <button class="btn primary" id="recovery-submit" style="width:100%;justify-content:center;margin-top:4px;" ${state.authLoading?'disabled':''}>${state.authLoading?'<span class="spinner"></span> Saving…':'Save new password'}</button>
+          <div style="text-align:center;margin-top:14px;font-size:11.5px;color:var(--ink-muted);"><span style="color:var(--accent-ochre);font-weight:600;cursor:pointer;" id="recovery-cancel">Cancel and go back to sign in</span></div>
+        </div>
+      </div>
+    </div>`;
+  }
+
+  // auth (sign in / sign up / forgot password)
   const mode = state.authMode || 'signin';
+  const subtitle = mode==='signin' ? 'Sign in to your team workspace.'
+    : mode==='forgot' ? 'Forgot your password? Enter your email and we\u2019ll send you a link to choose a new one.'
+    : 'Create your account. The very first person to sign up becomes Superadmin \u2014 everyone after starts as Staff.';
+  const buttonLabel = mode==='signin' ? 'Sign in' : mode==='forgot' ? 'Send reset link' : 'Create account';
+  const busyLabel = mode==='forgot' ? 'Sending\u2026' : 'Working\u2026';
   return `
   <div class="linen-teal" style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;">
     <div class="modal" style="max-width:440px;">
       <div class="modal-body" style="padding:28px 26px;">
         <img src="${LOGO_URI}" alt="" style="width:56px;margin-bottom:14px;">
-        <div class="eyebrow">Welcome to</div>
+        <div class="eyebrow">${mode==='forgot'?'Reset password for':'Welcome to'}</div>
         <h1 style="font-family:var(--serif);font-weight:400;font-size:26px;margin:0 0 4px;">${escapeHtml(state.company.name||'Amara CRM')}</h1>
-        <div class="page-sub" style="margin-bottom:20px;">${mode==='signin' ? 'Sign in to your team workspace.' : 'Create your account. The very first person to sign up becomes Superadmin — everyone after starts as Staff.'}</div>
+        <div class="page-sub" style="margin-bottom:20px;">${subtitle}</div>
 
         ${mode==='signup' ? `<div class="field"><label>Your name</label><input id="au-name" type="text" placeholder="e.g. Priya Nair"></div>` : ''}
-        <div class="field"><label>Email</label><input id="au-email" type="email" placeholder="you@amarahealthcare.com" autocomplete="username"></div>
-        <div class="field"><label>Password</label><input id="au-password" type="password" placeholder="${mode==='signup'?'At least 6 characters':'••••••••'}" autocomplete="${mode==='signin'?'current-password':'new-password'}"></div>
+        <div class="field"><label>Email</label><input id="au-email" type="email" placeholder="you@amarahealthcare.com" autocomplete="username" value="${escapeHtml(state.authEmail||'')}"></div>
+        ${mode!=='forgot' ? `<div class="field"><label>Password</label><input id="au-password" type="password" placeholder="${mode==='signup'?'At least 6 characters':'\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022'}" autocomplete="${mode==='signin'?'current-password':'new-password'}"></div>` : ''}
+        ${mode==='signin' ? `<div style="text-align:right;margin:-6px 0 12px;"><span style="color:var(--accent-ochre);font-weight:600;cursor:pointer;font-size:11.5px;" id="switch-to-forgot">Forgot password?</span></div>` : ''}
         ${state.setupError ? `<div style="color:var(--sos-red);font-size:11.5px;margin-bottom:10px;">${escapeHtml(state.setupError)}</div>` : ''}
         ${state.setupNotice ? `<div style="color:var(--code-positive);font-size:11.5px;margin-bottom:10px;">${escapeHtml(state.setupNotice)}</div>` : ''}
-        <button class="btn primary" id="auth-submit" style="width:100%;justify-content:center;margin-top:4px;" ${state.authLoading?'disabled':''}>${state.authLoading?'<span class="spinner"></span> Working…':(mode==='signin'?'Sign in':'Create account')}</button>
+        <button class="btn primary" id="auth-submit" style="width:100%;justify-content:center;margin-top:4px;" ${state.authLoading?'disabled':''}>${state.authLoading?`<span class="spinner"></span> ${busyLabel}`:buttonLabel}</button>
         <div style="text-align:center;margin-top:14px;font-size:11.5px;color:var(--ink-muted);">
           ${mode==='signin' ? `New team member? <span style="color:var(--accent-ochre);font-weight:600;cursor:pointer;" id="switch-to-signup">Create an account</span>`
-                             : `Already have an account? <span style="color:var(--accent-ochre);font-weight:600;cursor:pointer;" id="switch-to-signin">Sign in</span>`}
+            : mode==='forgot' ? `<span style="color:var(--accent-ochre);font-weight:600;cursor:pointer;" id="back-to-signin">\u2190 Back to sign in</span>`
+            : `Already have an account? <span style="color:var(--accent-ochre);font-weight:600;cursor:pointer;" id="switch-to-signin">Sign in</span>`}
         </div>
       </div>
     </div>
@@ -1143,19 +1208,69 @@ async function resetWorkspace(){
   flashToast('Business data cleared. Your team accounts were not touched.');
 }
 
+function friendlyAuthError(e){
+  const msg = (e && e.message) ? String(e.message) : '';
+  if(/rate limit|quota|too many|only request this after|security purposes/i.test(msg)){
+    return 'Too many emails have been requested recently. Please wait a few minutes and try again.';
+  }
+  return msg || 'Something went wrong. Please try again.';
+}
+function cleanAuthUrl(){
+  // drop the one-time token / error info from the address bar
+  try{ history.replaceState(null, '', window.location.pathname); }catch(e){}
+}
+function setAuthMode(mode){
+  const el = document.getElementById('au-email');
+  if(el) state.authEmail = el.value.trim(); // keep what they typed when switching screens
+  state.authMode = mode; state.setupError=''; state.setupNotice=''; render();
+}
+
 function bindSetupEvents(){
-  const switchToSignup = document.getElementById('switch-to-signup');
-  if(switchToSignup) switchToSignup.addEventListener('click', ()=>{ state.authMode='signup'; state.setupError=''; state.setupNotice=''; render(); });
-  const switchToSignin = document.getElementById('switch-to-signin');
-  if(switchToSignin) switchToSignin.addEventListener('click', ()=>{ state.authMode='signin'; state.setupError=''; state.setupNotice=''; render(); });
+  const wire = (id, mode)=>{ const el=document.getElementById(id); if(el) el.addEventListener('click', ()=>setAuthMode(mode)); };
+  wire('switch-to-signup','signup'); wire('switch-to-signin','signin'); wire('switch-to-forgot','forgot'); wire('back-to-signin','signin');
+
+  // Pressing Enter in any of these fields submits, like people expect
+  [['au-email','auth-submit'],['au-password','auth-submit'],['au-name','auth-submit'],['rc-password','recovery-submit'],['rc-confirm','recovery-submit']].forEach(([inputId,btnId])=>{
+    const inp = document.getElementById(inputId);
+    if(inp) inp.addEventListener('keydown',(e)=>{
+      if(e.key==='Enter'){ e.preventDefault(); const b=document.getElementById(btnId); if(b && !b.disabled) b.click(); }
+    });
+  });
 
   const submit = document.getElementById('auth-submit');
   if(submit) submit.addEventListener('click', async ()=>{
     const mode = state.authMode || 'signin';
+    // read every field BEFORE any re-render wipes the inputs
     const email = document.getElementById('au-email').value.trim();
-    const password = document.getElementById('au-password').value;
+    const passwordField = document.getElementById('au-password');
+    const password = passwordField ? passwordField.value : '';
     const nameField = document.getElementById('au-name');
     const name = nameField ? nameField.value.trim() : '';
+    state.authEmail = email;
+
+    if(mode === 'forgot'){
+      if(!email){ state.setupError = 'Enter the email address you signed up with.'; state.setupNotice=''; render(); return; }
+      if(Date.now() < (state.resetCooldownUntil||0)){
+        state.setupError = 'A reset link was just sent. Please wait a minute before requesting another.'; state.setupNotice=''; render(); return;
+      }
+      state.setupError=''; state.setupNotice=''; state.authLoading=true; render();
+      try{
+        const redirectTo = window.location.origin + window.location.pathname;
+        const {error} = await sb.auth.resetPasswordForEmail(email, { redirectTo });
+        if(error) throw error;
+        state.resetCooldownUntil = Date.now() + 60000;
+        state.authLoading = false;
+        // Deliberately the same wording whether or not the email has an account, so this can't be used to find out who's registered
+        state.setupNotice = 'If an account exists for ' + email + ', a reset link is on its way. Check your inbox and spam folder \u2014 it can take a few minutes. The link can only be used once.';
+        render();
+      }catch(e){
+        state.authLoading = false;
+        state.setupError = friendlyAuthError(e);
+        render();
+      }
+      return;
+    }
+
     if(!email || !password){ state.setupError = 'Email and password are both required.'; render(); return; }
     if(mode === 'signup' && !name){ state.setupError = 'Your name is required.'; render(); return; }
     state.setupError = ''; state.setupNotice = ''; state.authLoading = true; render();
@@ -1168,7 +1283,7 @@ function bindSetupEvents(){
         } else {
           // Email confirmation is turned on in the Supabase project settings
           state.authLoading = false;
-          state.setupNotice = 'Account created — check your email to confirm, then sign in.';
+          state.setupNotice = 'Account created \u2014 check your email to confirm, then sign in.';
           state.authMode = 'signin';
           render();
         }
@@ -1179,9 +1294,38 @@ function bindSetupEvents(){
       }
     }catch(e){
       state.authLoading = false;
-      state.setupError = e.message || 'Something went wrong. Please try again.';
+      state.setupError = friendlyAuthError(e);
       render();
     }
+  });
+
+  // Choosing a new password after clicking the emailed link
+  const recoverySubmit = document.getElementById('recovery-submit');
+  if(recoverySubmit) recoverySubmit.addEventListener('click', async ()=>{
+    const pw = document.getElementById('rc-password').value;
+    const pw2 = document.getElementById('rc-confirm').value;
+    if(pw.length < 6){ state.setupError = 'Password needs to be at least 6 characters.'; render(); return; }
+    if(pw !== pw2){ state.setupError = 'The two passwords don\u2019t match.'; render(); return; }
+    state.setupError = ''; state.authLoading = true; render();
+    try{
+      const {error} = await sb.auth.updateUser({ password: pw });
+      if(error) throw error;
+      state.recoveryMode = false; state.authLoading = false;
+      cleanAuthUrl();
+      await loadAll();
+      flashToast('Password updated \u2014 you\u2019re signed in.');
+    }catch(e){
+      state.authLoading = false;
+      state.setupError = friendlyAuthError(e);
+      render();
+    }
+  });
+  const recoveryCancel = document.getElementById('recovery-cancel');
+  if(recoveryCancel) recoveryCancel.addEventListener('click', async ()=>{
+    state.recoveryMode = false; cleanAuthUrl();
+    await sb.auth.signOut();
+    state.authMode = 'signin'; state.setupError = ''; state.setupNotice = '';
+    await loadAll();
   });
 
   const reload = document.getElementById('reload-after-signup');
@@ -3045,7 +3189,7 @@ function bindEvents(){
   app.querySelectorAll('[data-action="switch-user"]').forEach(el=>el.addEventListener('click', async ()=>{
     teardownRealtime();
     await sb.auth.signOut();
-    state.currentUser = null; state.authMode='signin'; state.setupStage='auth'; render();
+    state.currentUser = null; state.recoveryMode=false; state.authMode='signin'; state.setupStage='auth'; render();
   }));
 
   // my profile
@@ -3296,6 +3440,16 @@ async function runAiAudit(){
 }
 
 /* ============ INIT ============ */
+// Backup to the URL check: Supabase also announces a recovery session via this event
+sb.auth.onAuthStateChange((event)=>{
+  if(event === 'PASSWORD_RECOVERY'){
+    state.recoveryMode = true;
+    teardownRealtime();
+    state.setupStage = 'recovery';
+    state.loading = false;
+    render();
+  }
+});
 loadAll();
 
 })();
